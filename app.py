@@ -81,7 +81,7 @@ h1, h2, h3, .brand {
 .deck { background: var(--panel); border-bottom: 1px solid var(--accent); padding: 15px; margin-bottom: 20px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 15px; margin-bottom: 10px; }
 
-/* TABLE VISIBILITY FIX (Grey Background) */
+/* TABLE VISIBILITY FIX */
 div[data-testid="stDataFrame"] {
     background-color: #1a1a1a !important;
     border: 1px solid var(--border) !important;
@@ -232,10 +232,10 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# NAME DB (FULL)
+# FULL NAME DB
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
-    "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"食品","1618.T":"エネ資源","1619.T":"建設資材","1620.T":"素材化学","1625.T":"電機精密","1627.T":"電力ガス","1628.T":"運輸物流","1629.T":"商社卸売","1633.T":"不動産",
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
+    "1617.T":"食品ETF","1618.T":"エネ資源ETF","1619.T":"建設資材ETF","1620.T":"素材化学ETF","1621.T":"医薬品ETF","1622.T":"自動車ETF","1623.T":"鉄鋼非鉄ETF","1624.T":"機械ETF","1625.T":"電機精密ETF","1626.T":"情報通信ETF","1627.T":"電力ガスETF","1628.T":"運輸物流ETF","1629.T":"商社卸売ETF","1630.T":"小売ETF","1631.T":"銀行ETF","1632.T":"金融(除銀行)ETF","1633.T":"不動産ETF",
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
     "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
@@ -288,6 +288,14 @@ def extract_close_prices(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         log_system_event(f"Extract Close Error: {e}", "ERROR")
         return pd.DataFrame()
 
+def calc_period_returns(s: pd.Series) -> Dict[str, float]:
+    res = {}
+    for label, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
+        if len(s) > d:
+            res[label] = (s.iloc[-1] / s.iloc[-1-d] - 1) * 100
+        else: res[label] = np.nan
+    return res
+
 def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     if len(s) < win+1 or len(b) < win+1: return None
     s_win, b_win = s.tail(win+1), b.tail(win+1)
@@ -296,18 +304,19 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     p_ret = (s_win.iloc[-1]/s_win.iloc[0]-1)*100
     b_ret = (b_win.iloc[-1]/b_win.iloc[0]-1)*100
     rs = p_ret - b_ret
-    
     half = max(1, win//2)
     p_half = (s_win.iloc[-1]/s_win.iloc[-half-1]-1)*100
     accel = p_half - (p_ret/2)
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
+    # Calculate returns for multi-horizon
     rets = {}
     for l, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
-        if len(s) > d: rets[l] = (s.iloc[-1] / s.iloc[-1-d] - 1) * 100
+        if len(s) > d: rets[l] = (s.iloc[-1]/s.iloc[-1-d]-1)*100
         else: rets[l] = 0.0
         
-    return {"RS": rs, "Accel": accel, "MaxDD": dd, **rets}
+    # **CRITICAL FIX**: Include 'Ret' in return dictionary
+    return {"RS": rs, "Accel": accel, "MaxDD": dd, "Ret": p_ret, **rets}
 
 def audit_data_availability(expected: List[str], df: pd.DataFrame, win: int):
     present = [t for t in expected if t in df.columns]
@@ -493,7 +502,6 @@ def main():
     
     # Market Summary Box
     bench_news_context = ""
-    # Get benchmark news for context
     try:
         _, _, bench_news_context = get_news(bench, m_cfg["bench"]) 
     except: pass
@@ -544,7 +552,6 @@ def main():
     for t in [x for x in s_audit["list"] if x != bench]:
         stats = calc_technical_metrics(sec_df[t], sec_df[bench], win)
         if stats:
-            stats.update(calc_multi_horizon(sec_df[t]))
             stats["Ticker"] = t
             stats["Name"] = get_name(t)
             results.append(stats)
