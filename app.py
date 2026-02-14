@@ -16,16 +16,16 @@ import yfinance as yf
 # =========================
 # 1. Phantom UI Configuration (Orbitron Force)
 # =========================
-st.set_page_config(page_title="AlphaLens", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AlphaLens Sovereign", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
 /* FONT IMPORT */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
 
 /* --- PHANTOM DARK THEME VARIABLES --- */
 :root {
-  --bg-app: #000000;
+  --bg-app: #050505;
   --bg-panel: #0a0a0a;
   --bg-card: #121212;
   --border: #333333;
@@ -195,10 +195,11 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SECTOR_ETF, "stocks": JP_STOCKS},
 }
 
+# --- COMPLETE NAME DB ---
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"Cons","XLP":"Staples","XLI":"Ind","XLE":"Energy","XLB":"Mat","XLU":"Util","XLRE":"RE",
-    "1626.T":"通信","1631.T":"電機","1621.T":"自動車","1632.T":"医薬","1623.T":"銀行","1624.T":"金融","1622.T":"商社","1630.T":"機械","1617.T":"エネ","1618.T":"建設","1619.T":"素材","1633.T":"食品","1628.T":"電力","1625.T":"不動産","1629.T":"鉄鋼","1627.T":"サービス","1620.T":"産機",
-    "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
+    "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"エネ資源","1618.T":"建設資材","1619.T":"素材化学","1633.T":"食品","1628.T":"電力ガス","1625.T":"不動産","1629.T":"鉄鋼非鉄","1627.T":"サービス","1620.T":"産業機械",
+    "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas Inst","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
     "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
     "LIN":"Linde","NEE":"NextEra","DUK":"Duke","SO":"Southern","AMT":"Amer Tower","PLD":"Prologis","INTC":"Intel","CSCO":"Cisco","IBM":"IBM","UBER":"Uber","ABNB":"Airbnb","PYPL":"PayPal",
@@ -245,60 +246,64 @@ def extract_close(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         return close[keep]
     except: return pd.DataFrame()
 
-def calc_multi_horizon(s: pd.Series) -> Dict[str, float]:
-    res = {}
-    for label, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
-        if len(s) > d:
-            res[label] = (s.iloc[-1] / s.iloc[-1-d] - 1) * 100
-        else: res[label] = np.nan
-    return res
-
 def calc_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
+    # 1. Base Integrity
     if len(s) < win+1 or len(b) < win+1: return None
     s_win, b_win = s.tail(win+1), b.tail(win+1)
     if s_win.isna().any() or b_win.isna().any(): return None
     
+    # 2. Main Metrics
     p_ret = (s_win.iloc[-1]/s_win.iloc[0]-1)*100
     b_ret = (b_win.iloc[-1]/b_win.iloc[0]-1)*100
     rs = p_ret - b_ret
     
     half = max(1, win//2)
-    accel = ((s_win.iloc[-1]/s_win.iloc[-half-1]-1)*100) - (p_ret/2)
+    p_half = (s_win.iloc[-1]/s_win.iloc[-half-1]-1)*100
+    accel = p_half - (p_ret/2)
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
-    s6, b6 = s.tail(6).dropna(), b.tail(6).dropna()
+    # Stable
+    s_short, b_short = s.tail(6).dropna(), b.tail(6).dropna()
     stable = "⚠️"
-    if len(s6)==6 and len(b6)==6:
-        if np.sign((s6.iloc[-1]/s6.iloc[0]-1)-(b6.iloc[-1]/b6.iloc[0]-1)) == np.sign(rs): stable = "✅"
+    if len(s_short)==6 and len(b_short)==6:
+        rs_s = (s_short.iloc[-1]/s_short.iloc[0]-1) - (b_short.iloc[-1]/b_short.iloc[0]-1)
+        if np.sign(rs_s) == np.sign(rs): stable = "✅"
     
-    return {"RS": rs, "Accel": accel, "MaxDD": dd, "Stable": stable, "Ret": p_ret}
+    # 3. Multi-Horizon Returns (Robust)
+    rets = {}
+    for label, days in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
+        if len(s) > days:
+            rets[label] = (s.iloc[-1]/s.iloc[-1-days]-1)*100
+        else:
+            rets[label] = np.nan
+            
+    return {"RS": rs, "Accel": accel, "MaxDD": dd, "Stable": stable, "Ret": p_ret, **rets}
 
-def audit(expected: List[str], df: pd.DataFrame, win: int):
+def audit_gate(expected: List[str], df: pd.DataFrame, win: int):
     present = [t for t in expected if t in df.columns]
     if not present: return {"ok": False, "list": []}
     
-    last = df[present].apply(lambda x: x.last_valid_index())
-    mode = last.mode().iloc[0] if not last.mode().empty else None
+    last_dates = df[present].apply(lambda x: x.last_valid_index())
+    mode_date = last_dates.mode().iloc[0] if not last_dates.mode().empty else None
     
     computable = []
     for t in present:
-        if last[t] == mode and df[t].tail(win+1).notna().sum() >= win+1:
+        if last_dates[t] == mode_date and df[t].tail(win+1).notna().sum() >= win+1:
             computable.append(t)
             
-    return {"ok": True, "list": computable, "mode": mode, "count": len(computable), "total": len(expected)}
+    return {"ok": True, "list": computable, "mode": mode_date, "count": len(computable), "total": len(expected)}
 
 def zscore(s: pd.Series) -> pd.Series:
     if s.std() == 0: return pd.Series(0.0, index=s.index)
     return (s - s.mean()) / s.std(ddof=0)
 
 # =========================
-# AI & News
+# AI & News (Robust)
 # =========================
 @st.cache_data(ttl=1800)
-def fetch_news(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
-    y_news, g_news = [], []
-    
-    # Yahoo Safe
+def get_news_robust(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
+    # Yahoo
+    y_news = []
     try:
         raw = yf.Ticker(ticker).news
         if raw and isinstance(raw, list):
@@ -310,7 +315,8 @@ def fetch_news(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
                 })
     except: pass
     
-    # Google RSS Safe
+    # Google RSS
+    g_news = []
     try:
         q = urllib.parse.quote(f"{name} 株")
         url = f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja"
@@ -326,14 +332,9 @@ def fetch_news(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
     
     return y_news, g_news
 
-def get_ai_text(ticker: str, name: str, stats: Dict) -> str:
-    # RULE BASED FALLBACK (DEFAULT)
-    view = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
-    fallback = f"【AI CONNECTION FAILED OR NO KEY】\n\n[自動判定]\nトレンド: {view}\nRS: {stats['RS']:.2f}% | 12M: {stats['12M']:.1f}%"
-
+def call_gemini(ticker: str, name: str, stats: Dict) -> str:
     if HAS_GENAI and API_KEY:
         try:
-            # SWITCH TO gemini-pro (Stable)
             model = genai.GenerativeModel("gemini-pro")
             prompt = f"""
             あなたはプロのファンドマネージャーです。
@@ -350,11 +351,13 @@ def get_ai_text(ticker: str, name: str, stats: Dict) -> str:
             resp = model.generate_content(prompt)
             if resp and resp.text: return resp.text
         except: pass
-        
-    return fallback
+            
+    # Fallback
+    v = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
+    return f"※AIキー未設定 (Rule-based):\nトレンド: {v}\nRS: {stats['RS']:.2f}% | 12M: {stats['12M']:.1f}%"
 
 # =========================
-# Main UI
+# 5. Main UI
 # =========================
 def main():
     st.markdown("<div class='brand-box'><div class='brand-title'>ALPHALENS</div><div class='brand-sub'>COMMAND CENTER v33.0</div></div>", unsafe_allow_html=True)
@@ -394,12 +397,12 @@ def main():
     with c2: st.markdown(f"<div class='kpi-box status-green'><div class='kpi-label'>DATA MODE</div><div class='kpi-val'>{str(audit_res['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
 
     # 2. Market Overview
-    b_stats = calc_stats_multi(core_df[bench], core_df[bench], win)
+    b_stats = calc_metrics(core_df[bench], core_df[bench], win)
     
     sec_data = []
     for s_name, s_tk in m_cfg["sectors"].items():
         if s_tk in audit_res["list"]:
-            res = calc_stats_multi(core_df[s_tk], core_df[bench], win)
+            res = calc_metrics(core_df[s_tk], core_df[bench], win)
             if res:
                 res["Sector"] = s_name
                 sec_data.append(res)
@@ -441,7 +444,7 @@ def main():
     
     results = []
     for t in [x for x in s_audit["list"] if x != bench]:
-        stats = calc_stats_multi(sec_df[t], sec_df[bench], win)
+        stats = calc_metrics(sec_df[t], sec_df[bench], win)
         if stats:
             stats.update(calc_multi_horizon(sec_df[t]))
             stats["Ticker"] = t
@@ -483,19 +486,22 @@ def main():
     
     with c2:
         st.markdown(f"##### AI INTELLIGENCE: {top['Name']}")
-        ai_txt = get_ai_text(top["Ticker"], top["Name"], top.to_dict())
-        st.markdown(f"<div class='ai-box'>{ai_txt}</div>", unsafe_allow_html=True)
+        ai_txt = call_gemini(top["Ticker"], top["Name"], top.to_dict())
+        st.markdown(f"<div class='ai-box'><div style='font-size:13px; white-space: pre-wrap;'>{ai_txt}</div></div>", unsafe_allow_html=True)
         
-    # 5. News
+    # 5. NEWS
     st.markdown("---")
     st.subheader(f"INTELLIGENCE FEED: {top['Name']}")
-    yn, gn = fetch_news(top["Ticker"], top["Name"])
+    yn, gn = get_news_robust(top["Ticker"], top["Name"])
     
     n1, n2 = st.columns(2)
     with n1:
         st.caption("YAHOO FINANCE")
         if not yn: st.write("NO DATA")
-        for n in yn: st.markdown(f"- [{n['title']}]({n['link']})")
+        for n in yn:
+            t = n.get('title','Link')
+            l = n.get('link','#')
+            st.markdown(f"- [{t}]({l})")
     with n2:
         st.caption("GOOGLE NEWS")
         if not gn: st.write("NO DATA")
