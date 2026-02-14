@@ -15,10 +15,10 @@ import streamlit as st
 import yfinance as yf
 
 # ==========================================
-# 0. SYSTEM CONFIGURATION & LOGGING
+# 0. SYSTEM CONFIGURATION
 # ==========================================
 st.set_page_config(
-    page_title="AlphaLens Sovereign",
+    page_title="AlphaLens",
     layout="wide",
     initial_sidebar_state="expanded",
     page_icon="🦅"
@@ -36,13 +36,12 @@ def log_system_event(msg: str, level: str = "INFO"):
     print(entry)
 
 def error_boundary(func):
-    """Decorator to catch errors safely"""
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
             log_system_event(f"{func.__name__}: {str(e)}", "ERROR")
-            st.error(f"⚠️ SYSTEM ERROR in {func.__name__}: {str(e)}")
+            st.error(f"⚠️ SYSTEM ERROR: {str(e)}")
             return None
     return wrapper
 
@@ -75,38 +74,67 @@ h1, h2, h3, .brand {
   -webkit-text-fill-color: transparent;
   font-weight: 900 !important;
   text-shadow: 0 0 20px rgba(0, 242, 254, 0.5);
+  margin-bottom: 0px !important;
 }
 
 /* CONTAINERS */
-.deck { background: var(--panel); border: 1px solid var(--accent); padding: 20px; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0, 242, 254, 0.1); }
+.deck { background: var(--panel); border-bottom: 1px solid var(--accent); padding: 15px; margin-bottom: 20px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 15px; margin-bottom: 10px; }
 
-/* TABLE VISIBILITY FIX */
-div[data-testid="stDataFrame"] { background-color: #000 !important; border: 1px solid var(--border) !important; }
-div[data-testid="stDataFrame"] * { color: #e0e0e0 !important; background-color: #000 !important; font-family: 'Orbitron', monospace !important; }
-[data-testid="stHeader"] { background-color: #080808 !important; border-bottom: 2px solid var(--accent) !important; }
-[data-testid="stHeader"] * { color: var(--accent) !important; }
+/* TABLE VISIBILITY FIX (Grey Background) */
+div[data-testid="stDataFrame"] {
+    background-color: #1a1a1a !important;
+    border: 1px solid var(--border) !important;
+}
+div[data-testid="stDataFrame"] * {
+    color: #ffffff !important;
+    font-family: 'Noto Sans JP', sans-serif !important;
+}
+[data-testid="stHeader"] {
+    background-color: #222 !important;
+    border-bottom: 2px solid var(--accent) !important;
+}
 
 /* INPUTS */
 div[data-baseweb="select"] > div { background-color: #111 !important; border-color: #444 !important; color: #fff !important; }
-div[data-baseweb="popover"], div[data-baseweb="menu"] { background-color: #000 !important; border: 1px solid #444 !important; }
+div[data-baseweb="popover"], div[data-baseweb="menu"] { background-color: #111 !important; border: 1px solid #444 !important; }
 div[data-baseweb="option"] { color: #fff !important; }
 li[data-baseweb="option"]:hover { background-color: #222 !important; color: #00f2fe !important; }
 .stSelectbox label { color: #aaa !important; }
 
 /* BUTTONS */
 button {
-  background-color: #000 !important;
+  background-color: #111 !important;
   color: var(--accent) !important;
   border: 1px solid #333 !important;
-  border-radius: 0px !important;
+  border-radius: 4px !important;
   font-weight: 800 !important;
   text-transform: uppercase;
 }
 button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(--accent) !important; color: #fff !important; }
 
 /* AI BOX */
-.ai-box { border: 1px dashed var(--accent); background: rgba(0,242,254,0.05); padding: 20px; margin-top: 15px; font-size: 13px; line-height: 1.6; color: #eee; }
+.ai-box { 
+    border: 1px solid var(--accent); 
+    background: rgba(0,242,254,0.05); 
+    padding: 20px; 
+    margin: 15px 0; 
+    font-size: 14px; 
+    line-height: 1.8; 
+    color: #eee;
+    border-radius: 8px;
+}
+
+/* MARKET SUMMARY BOX */
+.market-box {
+    border-left: 5px solid var(--accent);
+    background: #0f0f0f;
+    padding: 15px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: #ddd;
+}
 
 /* METRICS */
 .kpi-val { font-size: 24px; color: var(--accent); font-weight: 700; text-shadow: 0 0 10px rgba(0,242,254,0.4); }
@@ -146,19 +174,17 @@ def check_access():
 if not check_access(): st.stop()
 
 # ==========================================
-# 3. UNIVERSE DEFINITIONS (FULL SET)
+# 3. UNIVERSE DEFINITIONS
 # ==========================================
-LOOKBACKS = {"1W": 5, "1M": 21, "3M": 63, "12M": 252}
+LOOKBACKS = {"1W (5d)": 5, "1M (21d)": 21, "3M (63d)": 63, "12M (252d)": 252}
 FETCH_PERIOD = "24mo"
 
-# US SECTORS
 US_SEC = {
     "Technology": "XLK", "Healthcare": "XLV", "Financials": "XLF", "Comm Services": "XLC",
     "Cons. Disc": "XLY", "Cons. Staples": "XLP", "Industrials": "XLI", "Energy": "XLE",
     "Materials": "XLB", "Utilities": "XLU", "Real Estate": "XLRE"
 }
 
-# JP SECTORS (NEXT FUNDS Official)
 JP_SEC = {
     "食品(Foods)": "1617.T", "エネ資源(Energy)": "1618.T", "建設資材(Const)": "1619.T",
     "素材化学(Mat)": "1620.T", "医薬品(Pharma)": "1621.T", "自動車(Auto)": "1622.T",
@@ -168,7 +194,6 @@ JP_SEC = {
     "金融(Fin)": "1632.T", "不動産(RE)": "1633.T"
 }
 
-# STOCKS (FULL ~400)
 US_STOCKS = {
     "Technology": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
     "Comm Services": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
@@ -207,9 +232,9 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# FULL NAME DB
+# NAME DB (FULL)
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"食品","1618.T":"エネ資源","1619.T":"建設資材","1620.T":"素材化学","1625.T":"電機精密","1627.T":"電力ガス","1628.T":"運輸物流","1629.T":"商社卸売","1633.T":"不動産",
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
@@ -244,7 +269,7 @@ def fetch_market_data(tickers: Tuple[str, ...], period: str) -> pd.DataFrame:
             r = yf.download(" ".join(c), period=period, interval="1d", group_by="ticker", auto_adjust=True, threads=True, progress=False)
             if not r.empty: frames.append(r)
         except Exception as e:
-            log_system_event(f"Fetch Chunk {i} Error: {e}", "WARN")
+            log_system_event(f"Fetch Chunk Error: {e}", "WARN")
             continue
     return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
@@ -263,14 +288,6 @@ def extract_close_prices(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         log_system_event(f"Extract Close Error: {e}", "ERROR")
         return pd.DataFrame()
 
-def calc_period_returns(s: pd.Series) -> Dict[str, float]:
-    res = {}
-    for label, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
-        if len(s) > d:
-            res[label] = (s.iloc[-1] / s.iloc[-1-d] - 1) * 100
-        else: res[label] = np.nan
-    return res
-
 def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     if len(s) < win+1 or len(b) < win+1: return None
     s_win, b_win = s.tail(win+1), b.tail(win+1)
@@ -279,12 +296,18 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     p_ret = (s_win.iloc[-1]/s_win.iloc[0]-1)*100
     b_ret = (b_win.iloc[-1]/b_win.iloc[0]-1)*100
     rs = p_ret - b_ret
+    
     half = max(1, win//2)
     p_half = (s_win.iloc[-1]/s_win.iloc[-half-1]-1)*100
     accel = p_half - (p_ret/2)
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
-    return {"RS": rs, "Accel": accel, "MaxDD": dd, "Stable": "✅", "Ret": p_ret}
+    rets = {}
+    for l, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
+        if len(s) > d: rets[l] = (s.iloc[-1] / s.iloc[-1-d] - 1) * 100
+        else: rets[l] = 0.0
+        
+    return {"RS": rs, "Accel": accel, "MaxDD": dd, **rets}
 
 def audit_data_availability(expected: List[str], df: pd.DataFrame, win: int):
     present = [t for t in expected if t in df.columns]
@@ -301,57 +324,100 @@ def calculate_zscore(s: pd.Series) -> pd.Series:
     if s.std() == 0: return pd.Series(0.0, index=s.index)
     return (s - s.mean()) / s.std(ddof=0)
 
-def get_market_summary(df_sec: pd.DataFrame, bench_ret: float) -> str:
-    top = df_sec.iloc[-1]["Sector"]
-    bot = df_sec.iloc[0]["Sector"]
-    diff = df_sec.iloc[-1]["RS"] - df_sec.iloc[0]["RS"]
-    
-    if HAS_LIB and API_KEY:
-        # STRICT AI MODEL: 2.0-flash Only
-        try:
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            p = f"市場リターン:{bench_ret:.2f}%, 先導:{top}, 遅行:{bot}, 格差:{diff:.1f}。市況を3行で要約せよ。"
-            resp = model.generate_content(p)
-            if resp.text: return resp.text
-        except: pass
-    
-    return f"【市況概況】市場トレンドは{bench_ret:.1f}%。{top}セクターが牽引する一方、{bot}が軟調。セクター間格差は{diff:.1f}ポイントに拡大中。"
+# --- AI & NEWS FUNCTIONS ---
 
 @st.cache_data(ttl=1800)
 def get_news(ticker: str, name: str) -> Tuple[List[dict], List[dict], str]:
     y_news, g_news = [], []
-    context_text = ""
+    context = ""
+    # Yahoo
     try:
         raw = yf.Ticker(ticker).news
         if raw:
             for n in raw[:3]:
-                y_news.append({"title": n.get("title",""), "link": n.get("link","")})
-                context_text += f"- {n.get('title','')}\n"
+                title = n.get("title","")
+                link = n.get("link","")
+                y_news.append({"title": title, "link": link})
+                context += f"- {title}\n"
     except: pass
+    # Google
     try:
         q = urllib.parse.quote(f"{name} 株")
         with urllib.request.urlopen(f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja", timeout=3) as r:
             root = ET.fromstring(r.read())
             for i in root.findall(".//item")[:3]:
                 t = i.findtext("title")
-                g_news.append({"title": t, "link": i.findtext("link")})
-                context_text += f"- {t}\n"
+                l = i.findtext("link")
+                g_news.append({"title": t, "link": l})
+                context += f"- {t}\n"
     except: pass
-    return y_news, g_news, context_text
+    
+    return y_news, g_news, context
 
-def call_ai_analysis(ticker: str, name: str, stats: Dict, news_context: str) -> str:
+def get_market_summary_ai(df_sec: pd.DataFrame, bench_ret: float, news_summary: str) -> str:
     if not HAS_LIB or not API_KEY:
-        return "⚠️ AI OFFLINE: CHECK KEYS"
-
-    # STRICT MODEL SELECTION: 2.0-flash / 2.0-flash-lite
+        return f"【市況概況】市場:{bench_ret:.2f}%。セクター騰落による強弱が鮮明。AI解説にはキーが必要です。"
+    
+    top = df_sec.iloc[-1]["Sector"]
+    bot = df_sec.iloc[0]["Sector"]
+    
+    # 2.0-flash ONLY
     models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
     
     for m in models:
         try:
             model = genai.GenerativeModel(m)
+            p = f"""
+            市場ベンチマーク:{bench_ret:.2f}%
+            最強セクター:{top}
+            最弱セクター:{bot}
+            
+            上記データに基づき、現在の市場環境（強気・弱気・循環物色など）を分析し、
+            「市況概況」として300文字程度で、上げ下げの実感が湧くように具体的に日本語で解説せよ。
+            変動要因として考えられる要素も推測して記述せよ。
+            """
+            return model.generate_content(p).text
+        except Exception as e:
+            if "429" in str(e): time.sleep(2); continue
+            
+    return f"市場:{bench_ret:.2f}%。{top}が主導する一方、{bot}は軟調。（AI制限のため簡易表示）"
+
+def get_sector_analysis_ai(sector_name: str, df_stocks: pd.DataFrame) -> str:
+    if not HAS_LIB or not API_KEY: return "AI分析機能はオフラインです。"
+    
+    # Simple stats
+    avg_rs = df_stocks["RS"].mean()
+    top_stock = df_stocks.iloc[0]["Name"]
+    
+    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    for m in models:
+        try:
+            model = genai.GenerativeModel(m)
+            p = f"""
+            あなたは証券アナリストです。
+            セクター: {sector_name}
+            平均RS(相対強度): {avg_rs:.2f}
+            セクター内首位: {top_stock}
+            
+            このセクターの現在の投資妙味、リスク、今後の見通しを
+            「概況」「見通し」の2点に分けて、プロフェッショナルな視点で日本語で解説してください。
+            """
+            return model.generate_content(p).text
+        except:
+            time.sleep(1)
+            continue
+            
+    return "AI分析を実行できませんでした（アクセス集中など）。"
+
+def call_ai_analysis(ticker: str, name: str, stats: Dict, news_context: str) -> str:
+    if not HAS_LIB or not API_KEY: return "AI OFFLINE"
+    
+    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    for m in models:
+        try:
+            model = genai.GenerativeModel(m)
             prompt = f"""
-            あなたはプロのファンドマネージャーです。
-            以下の定量的・定性的データに基づき、3名のエージェント（モメンタム、リスク、マクロ）として議論し、結論を出してください。
+            あなたはプロのファンドマネージャーです。以下の銘柄について3名のエージェント（モメンタム、リスク、マクロ）として議論し、結論を出してください。
             
             【対象】{name} ({ticker})
             【定量データ】RS:{stats['RS']:.2f}%, 加速:{stats['Accel']:.2f}, 1年騰落:{stats.get('12M',0):.1f}%
@@ -366,45 +432,33 @@ def call_ai_analysis(ticker: str, name: str, stats: Dict, news_context: str) -> 
             """
             return model.generate_content(prompt).text
         except Exception as e:
-            if "429" in str(e):
-                time.sleep(2) # Retry logic
-                continue
-            if "404" in str(e): continue
+            if "429" in str(e): time.sleep(2); continue
             
-    # Fallback Rule-Based Debate
-    v = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
-    return f"""
-    【モメンタム】RS{stats['RS']:.2f}%と{'加速' if stats['Accel']>0 else '減速'}傾向を確認。
-    【リスク】ニュース材料（{news_context[:20]}...）に注意が必要。
-    【結論】{v} (AI接続不可のためルールベース生成)
-    """
+    return "⚠️ AI BUSY (429). Please retry or check billing."
 
 # ==========================================
 # 5. MAIN UI
 # ==========================================
 @error_boundary
 def main():
-    st.markdown("<h2 class='brand'>ALPHALENS SOVEREIGN</h2>", unsafe_allow_html=True)
+    st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
     
     # Sidebar Logs
     with st.sidebar:
         st.markdown("### SYSTEM LOGS")
         if st.session_state.system_logs:
             for l in st.session_state.system_logs[-5:]:
-                st.markdown(f"<div style='font-size:10px; color:#ff6b6b; border-left:2px solid red; padding-left:5px;'>{l}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='log-box'>{l}</div>", unsafe_allow_html=True)
         if st.button("CLEAR LOGS"): st.session_state.system_logs = []; st.rerun()
 
     # Controls
-    with st.container():
-        st.markdown("<div class='deck'>", unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
-        with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
-        with c2: lookback_key = st.selectbox("WINDOW", list(LOOKBACKS.keys()), index=1)
-        with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
-        with c4: 
-            st.write("")
-            sync = st.button("SYNC", type="primary", use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
+    with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
+    with c2: lookback_key = st.selectbox("WINDOW", list(LOOKBACKS.keys()), index=1)
+    with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
+    with c4: 
+        st.write("")
+        sync = st.button("SYNC", type="primary", use_container_width=True)
 
     m_cfg = MARKETS[market_key]
     win = LOOKBACKS[lookback_key]
@@ -425,11 +479,7 @@ def main():
         st.error("DATA FEED DISCONNECTED")
         return
 
-    col1, col2 = st.columns(2)
-    with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>DATA HEALTH</div><div class='kpi-val'>{audit['count']}/{audit['total']}</div></div>", unsafe_allow_html=True)
-    with col2: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>LATEST DATE</div><div class='kpi-val'>{str(audit['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
-
-    # 2. Sector Overview
+    # 2. Market Overview
     b_stats = calc_technical_metrics(core_df[bench], core_df[bench], win)
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
@@ -441,45 +491,48 @@ def main():
     
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
     
-    # Market Summary
-    st.info(get_market_summary(sdf, b_stats["Ret"]))
+    # Market Summary Box
+    bench_news_context = ""
+    # Get benchmark news for context
+    try:
+        _, _, bench_news_context = get_news(bench, m_cfg["bench"]) 
+    except: pass
+    
+    market_comment = get_market_summary_ai(sdf, b_stats["Ret"], bench_news_context)
+    st.markdown(f"<div class='market-box'><b>MARKET OVERVIEW ({lookback_key})</b><br>{market_comment}</div>", unsafe_allow_html=True)
 
-    # Chart
+    # 3. Sector Chart
     st.subheader("SECTOR ROTATION")
     fig = px.bar(sdf, x="RS", y="Sector", orientation='h', color="RS", color_continuous_scale="RdYlGn")
     fig.update_layout(height=400, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#e0e0e0', font_family="Orbitron")
     
-    # SAFE SELECTION LOGIC
-    chart_key = "sec_chart"
+    # Interaction
+    chart_key = "sector_chart"
     st.plotly_chart(fig, use_container_width=True, on_select="rerun", key=chart_key)
     
-    # Try getting selection safely
     click_sec = None
     try:
         sel = st.session_state.get(chart_key)
-        if sel and "selection" in sel and "points" in sel["selection"] and sel["selection"]["points"]:
+        if sel and sel["selection"]["points"]:
             click_sec = sel["selection"]["points"][0]["y"]
     except: pass
 
-    # Fallback Buttons
-    cols = st.columns(6)
-    for i, s in enumerate(m_cfg["sectors"].keys()):
-        if cols[i%6].button(s, key=f"btn_{s}", use_container_width=True):
-            click_sec = s
-            
+    # Target Sector
     target_sector = click_sec or st.session_state.selected_sector or list(m_cfg["sectors"].keys())[0]
     st.session_state.selected_sector = target_sector
     
-    # 3. Drill Down
-    st.markdown("---")
-    st.subheader(f"FORENSIC: {target_sector}")
+    # 4. Sector Analysis & Stocks
+    st.markdown(f"<div id='sector_anchor'></div>", unsafe_allow_html=True) # Anchor for scroll
+    st.divider()
+    st.subheader(f"SECTOR FORENSIC: {target_sector}")
     
+    # Fetch Sector Stocks
     stock_list = m_cfg["stocks"].get(target_sector, [])
     full_list = [bench] + stock_list
     
     cache_key = f"{market_key}_{target_sector}"
     if cache_key != st.session_state.get("sec_cache_key") or sync:
-        with st.spinner("SCANNING SECTOR ASSETS..."):
+        with st.spinner(f"ANALYZING {target_sector}..."):
             raw_s = fetch_market_data(tuple(full_list), FETCH_PERIOD)
             st.session_state.sec_df = extract_close_prices(raw_s, full_list)
             st.session_state.sec_cache_key = cache_key
@@ -491,31 +544,30 @@ def main():
     for t in [x for x in s_audit["list"] if x != bench]:
         stats = calc_technical_metrics(sec_df[t], sec_df[bench], win)
         if stats:
-            stats.update(calc_period_returns(sec_df[t]))
+            stats.update(calc_multi_horizon(sec_df[t]))
             stats["Ticker"] = t
             stats["Name"] = get_name(t)
             results.append(stats)
             
     if not results:
-        st.warning("NO DATA FOUND.")
+        st.warning("NO STOCKS FOUND.")
         return
         
     df = pd.DataFrame(results)
-    df["RS_z"] = calculate_zscore(df["RS"])
-    df["Acc_z"] = calculate_zscore(df["Accel"])
-    df["DD_z"] = calculate_zscore(df["MaxDD"])
-    df["Apex"] = 0.6*df["RS_z"] + 0.25*df["Acc_z"] - 0.15*df["DD_z"]
-    df = df.sort_values("Apex", ascending=False).reset_index(drop=True)
-    df["Verdict"] = df.apply(lambda r: "STRONG" if r["RS"]>0 and r["Accel"]>0 and r["Stable"]=="✅" else "WATCH" if r["RS"]>0 else "AVOID", axis=1)
+    df["Apex"] = 0.6 * calculate_zscore(df["RS"]) + 0.4 * calculate_zscore(df["Accel"])
+    df = df.sort_values("Apex", ascending=False)
+    
+    # Sector AI Analysis
+    sec_ai_txt = get_sector_analysis_ai(target_sector, df)
+    st.markdown(f"<div class='ai-box'><b>SECTOR OUTLOOK</b><br>{sec_ai_txt}</div>", unsafe_allow_html=True)
 
-    # 4. Table & Detail
+    # 5. Leaderboard & Stock AI
     c1, c2 = st.columns([1.5, 1])
     with c1:
         st.markdown("##### LEADERBOARD")
         event = st.dataframe(
-            df[["Name", "Verdict", "Apex", "RS", "Accel", "1W", "1M", "12M"]],
+            df[["Name", "RS", "Accel", "1W", "1M", "12M"]],
             column_config={
-                "Apex": st.column_config.NumberColumn(format="%.2f"),
                 "RS": st.column_config.ProgressColumn(format="%.2f%%", min_value=-20, max_value=20),
                 "Accel": st.column_config.NumberColumn(format="%.2f"),
                 "1W": st.column_config.NumberColumn(format="%.1f%%"),
@@ -525,20 +577,18 @@ def main():
             hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
         )
         
-        # Safe Selection for Table
         try:
             sel_rows = event.selection.get("rows", [])
             top = df.iloc[sel_rows[0]] if sel_rows else df.iloc[0]
-        except:
-            top = df.iloc[0]
+        except: top = df.iloc[0]
 
     with c2:
-        st.markdown(f"##### AI INTELLIGENCE: {top['Name']}")
+        st.markdown(f"##### ANALYSIS: {top['Name']}")
         yn, gn, context = get_news(top["Ticker"], top["Name"])
         ai_txt = call_ai_analysis(top["Ticker"], top["Name"], top.to_dict(), context)
         st.markdown(f"<div class='ai-box'>{ai_txt}</div>", unsafe_allow_html=True)
         
-        st.caption("LATEST HEADLINES")
+        st.caption("HEADLINES")
         for n in (yn + gn)[:4]:
             st.markdown(f"- [{n['title']}]({n['link']})")
 
