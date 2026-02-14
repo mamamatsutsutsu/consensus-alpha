@@ -61,7 +61,8 @@ st.markdown("""
   --card: #121212;
   --border: #333333;
   --accent: #00f2fe;     /* Cyan */
-  --accent-neg: #ff0055; /* Red */
+  --accent-2: #ff0055;   /* Pink/Red */
+  --accent-3: #00ff88;   /* Green */
   --text: #e0e0e0;
 }
 
@@ -107,10 +108,10 @@ button {
 }
 button:hover { border-color: var(--accent) !important; box-shadow: 0 0 10px var(--accent) !important; color: #fff !important; }
 
-/* 5-AGENT COUNCIL STYLES (Fixed Typo) */
+/* 5-AGENT COUNCIL STYLES */
 .agent-row {
     display: flex;
-    align-items: baseline; /* Corrected from align_items */
+    align-items: baseline; 
     margin-bottom: 8px;
     padding: 8px 12px;
     border-radius: 4px;
@@ -127,7 +128,7 @@ button:hover { border-color: var(--accent) !important; box-shadow: 0 0 10px var(
 .agent-skeptic { border-left-color: #ffcc00; } .agent-skeptic .agent-label { color: #ffcc00; }
 .agent-risk { border-left-color: #888888; } .agent-risk .agent-label { color: #888888; }
 .agent-verdict { border: 1px solid #fff; background: #1a1a1a; padding: 15px; margin-top: 15px; font-weight: bold; }
-.agent-box { padding: 10px; background: #111; color: #888; font-size: 12px; } /* Fallback */
+.agent-box { padding: 10px; background: #111; color: #888; font-size: 12px; }
 
 /* MARKET PULSE */
 .market-box {
@@ -240,10 +241,25 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# NAME DB (Simple)
+# FULL NAME DB
 NAME_DB = {
     "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
-    "1617.T":"食品ETF","1618.T":"エネ資源ETF","1619.T":"建設資材ETF","1620.T":"素材化学ETF","1621.T":"医薬品ETF","1622.T":"自動車ETF","1623.T":"鉄鋼非鉄ETF","1624.T":"機械ETF","1625.T":"電機精密ETF","1626.T":"情報通信ETF","1627.T":"電力ガスETF","1628.T":"運輸物流ETF","1629.T":"商社卸売ETF","1630.T":"小売ETF","1631.T":"銀行ETF","1632.T":"金融(除銀行)ETF","1633.T":"不動産ETF",
+    "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"食品","1618.T":"エネ資源","1619.T":"建設資材","1620.T":"素材化学","1625.T":"電機精密","1627.T":"電力ガス","1628.T":"運輸物流","1629.T":"商社卸売","1633.T":"不動産",
+    "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
+    "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
+    "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
+    "LIN":"Linde","NEE":"NextEra","DUK":"Duke","SO":"Southern","AMT":"Amer Tower","PLD":"Prologis","INTC":"Intel","CSCO":"Cisco","IBM":"IBM","UBER":"Uber","ABNB":"Airbnb","PYPL":"PayPal",
+    "8035.T":"東京エレク","6857.T":"アドバンテ","6146.T":"ディスコ","6920.T":"レーザーテク","6723.T":"ルネサス","6758.T":"ソニーG","6501.T":"日立","6981.T":"村田製","6954.T":"ファナック","7741.T":"HOYA","6702.T":"富士通","6503.T":"三菱電機","6752.T":"パナHD","7735.T":"SCREEN","6861.T":"キーエンス","6971.T":"京セラ","6645.T":"オムロン",
+    "9432.T":"NTT","9433.T":"KDDI","9434.T":"ソフトバンク","9984.T":"SBG","4689.T":"LINEヤフー","6098.T":"リクルート","4755.T":"楽天G","9613.T":"NTTデータ","2413.T":"エムスリー","4385.T":"メルカリ",
+    "7203.T":"トヨタ","7267.T":"ホンダ","6902.T":"デンソー","7201.T":"日産","7269.T":"スズキ","7270.T":"SUBARU","7272.T":"ヤマハ発","9101.T":"日本郵船","9104.T":"商船三井","9020.T":"JR東日本","9022.T":"JR東海","9005.T":"東急",
+    "8306.T":"三菱UFJ","8316.T":"三井住友","8411.T":"みずほ","8308.T":"りそな","8309.T":"三井住友トラ","7182.T":"ゆうちょ","5831.T":"しずおかFG","8331.T":"千葉銀","8354.T":"ふくおかFG",
+    "8591.T":"オリックス","8604.T":"野村HD","8766.T":"東京海上","8725.T":"MS&AD","8750.T":"第一生命","8697.T":"日本取引所","8630.T":"SOMPO","8570.T":"イオンFS",
+    "8001.T":"伊藤忠","8031.T":"三井物産","8058.T":"三菱商事","8053.T":"住友商事","8002.T":"丸紅","3382.T":"7&i","9983.T":"ファストリ","8267.T":"イオン","2914.T":"JT",
+    "4063.T":"信越化学","4452.T":"花王","4901.T":"富士フイルム","4911.T":"資生堂","3407.T":"旭化成","5401.T":"日本製鉄","5411.T":"JFE","6301.T":"コマツ","7011.T":"三菱重工","6367.T":"ダイキン","6273.T":"SMC",
+    "1605.T":"INPEX","5020.T":"ENEOS","9501.T":"東電EP","9503.T":"関電","9531.T":"東ガス","4502.T":"武田","4568.T":"第一三共","4519.T":"中外","4503.T":"アステラス","4507.T":"塩野義","4523.T":"エーザイ",
+    "8801.T":"三井不","8802.T":"三菱地所","8830.T":"住友不","4661.T":"OLC","9735.T":"セコム","4324.T":"電通","2127.T":"日本M&A","6028.T":"テクノプロ","2412.T":"ベネフィット","4689.T":"LINEヤフー",
+    "6146.T":"ディスコ","6460.T":"セガサミー","6471.T":"日本精工","6268.T":"ナブテスコ","2801.T":"キッコーマン","2802.T":"味の素",
+    "5711.T":"三菱マテ","5713.T":"住友鉱","5802.T":"住友電工","5406.T":"神戸鋼","3402.T":"東レ","4021.T":"日産化","4188.T":"三菱ケミ","4631.T":"DIC","3765.T":"ガンホー","3659.T":"ネクソン","2002.T":"日清製粉"
 }
 
 def get_name(t: str) -> str: return NAME_DB.get(t, t)
@@ -281,6 +297,20 @@ def extract_close_prices(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         log_system_event(f"Extract Close Error: {e}", "ERROR")
         return pd.DataFrame()
 
+def audit_data_availability(expected: List[str], df: pd.DataFrame, win: int):
+    present = [t for t in expected if t in df.columns]
+    if not present: return {"ok": False, "list": []}
+    
+    last_valid = df[present].apply(lambda x: x.last_valid_index())
+    mode_date = last_valid.mode().iloc[0] if not last_valid.empty else None
+    
+    computable = []
+    for t in present:
+        if last_valid[t] == mode_date and len(df[t].dropna()) >= win + 1:
+            computable.append(t)
+            
+    return {"ok": True, "list": computable, "mode": mode_date, "count": len(computable), "total": len(expected)}
+
 def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     s_clean = s.dropna()
     b_clean = b.dropna()
@@ -301,7 +331,6 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     accel = p_half - (p_ret/2)
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
-    # 52W High
     if len(s_clean) >= 252:
         year_high = s_clean.tail(252).max()
     else:
@@ -310,7 +339,6 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     curr = s_win.iloc[-1]
     high_dist = (curr / year_high - 1) * 100 if year_high > 0 else 0
     
-    # Multi-Horizon
     rets = {}
     s_ffill = s.ffill()
     for l, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
@@ -321,33 +349,24 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     
     return {"RS": rs, "Accel": accel, "MaxDD": dd, "Ret": p_ret, "HighDist": high_dist, **rets}
 
+def calculate_regime(bench_series: pd.Series) -> Tuple[str, float]:
+    if len(bench_series) < 200: return "Unknown", 0.5
+    
+    curr = bench_series.iloc[-1]
+    ma200 = bench_series.rolling(200).mean().iloc[-1]
+    vol20 = bench_series.pct_change().tail(20).std() * np.sqrt(252)
+    
+    trend = "Bull" if curr > ma200 else "Bear"
+    vol_state = "High" if vol20 > 0.15 else "Low" # 15% threshold
+    regime = f"{trend} / {vol_state} Vol"
+    weight_momentum = 0.6 if trend == "Bull" else 0.3
+    return regime, weight_momentum
+
 def calculate_zscore(s: pd.Series) -> pd.Series:
     if s.std() == 0: return pd.Series(0.0, index=s.index)
     return (s - s.mean()) / s.std(ddof=0)
 
-# --- AI & NEWS (RICH DATA) ---
-
-@st.cache_data(ttl=1800)
-def get_fundamental_data_rich(ticker: str) -> Dict[str, Any]:
-    """Rich Fundamental Data for AI"""
-    try:
-        info = yf.Ticker(ticker).info or {}
-        def fmt(x): return None if x in [None, "N/A"] else x
-        return {
-            "price": fmt(info.get("currentPrice")),
-            "mcap": fmt(info.get("marketCap")),
-            "fwdPE": fmt(info.get("forwardPE")),
-            "trailPE": fmt(info.get("trailingPE")),
-            "PBR": fmt(info.get("priceToBook")),
-            "revGrowth": fmt(info.get("revenueGrowth")),
-            "earnGrowth": fmt(info.get("earningsGrowth")),
-            "opMargin": fmt(info.get("operatingMargins")),
-            "divYield": fmt(info.get("dividendYield")),
-            "beta": fmt(info.get("beta")),
-            "target": fmt(info.get("targetMeanPrice")),
-            "rec": fmt(info.get("recommendationKey"))
-        }
-    except: return {}
+# --- AI & NEWS (ROBUST & SORTED) ---
 
 @st.cache_data(ttl=1800)
 def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple[List[dict], str]:
@@ -366,7 +385,7 @@ def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple
             if title: context_lines.append(f"- {title}")
     except: pass
 
-    # Google
+    # Google RSS
     try:
         q = urllib.parse.quote(f"{name} 株")
         url = f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja"
@@ -386,19 +405,31 @@ def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple
     except: pass
 
     news_items.sort(key=lambda x: x["pub"], reverse=True)
-    context = "\n".join(context_lines[:12]) 
+    context = "\n".join(context_lines[:15]) 
     return news_items, context
+
+@st.cache_data(ttl=3600)
+def get_fundamental_data(ticker: str) -> Dict[str, Any]:
+    try:
+        info = yf.Ticker(ticker).info
+        return {
+            "PER": info.get("forwardPE", "N/A"),
+            "PBR": info.get("priceToBook", "N/A"),
+            "PEG": info.get("pegRatio", "N/A"),
+            "Target": info.get("targetMeanPrice", "N/A"),
+            "Rec": info.get("recommendationKey", "N/A")
+        }
+    except:
+        return {}
 
 def markdown_bold_to_html(text: str) -> str:
     """Convert Markdown bold to HTML highlight"""
     def repl(m):
         inner = m.group(1)
-        # Check for negative context
-        cls = "highlight-neg" if any(x in inner for x in ["-", "−", "マイナス", "下落", "弱"]) else "highlight"
+        cls = "highlight-neg" if any(x in inner for x in ["-", "−", "マイナス", "下落", "弱", "安"]) else "highlight"
         return f"<span class='{cls}'>{inner}</span>"
     
     text = re.sub(r"\*\*(.+?)\*\*", repl, text)
-    # Force double newline before bullet points header
     text = re.sub(r"(【主な変動要因】)", r"\n\n\1", text)
     return text
 
@@ -413,14 +444,9 @@ def parse_agent_debate(text: str) -> str:
         "[JUDGE]": ("agent-verdict", "JUDGE"),
     }
     
-    # Clean code blocks
     clean = text.replace("```html", "").replace("```", "").strip()
-    
-    # Remove preface before first tag
     m = re.search(r"\[[A-Z]+\]", clean)
     if m: clean = clean[m.start():]
-    
-    # Split by tags
     parts = re.split(r'(\[[A-Z]+\])', clean)
     
     html = ""
@@ -431,7 +457,6 @@ def parse_agent_debate(text: str) -> str:
     def flush():
         nonlocal html, buffer, current_cls, current_label
         if current_cls and current_label and buffer.strip():
-            # Force single line content (no newlines in buffer)
             b = re.sub(r"\s*\n+\s*", " ", buffer).strip()
             html += f"<div class='agent-row {current_cls}'><div class='agent-label'>{current_label}</div><div>{b}</div></div>"
         buffer = ""
@@ -439,7 +464,6 @@ def parse_agent_debate(text: str) -> str:
     for part in parts:
         part = part.strip()
         if not part: continue
-        
         if part in mapping:
             flush()
             current_cls, current_label = mapping[part]
@@ -454,14 +478,8 @@ def build_sector_candidates_context(df: pd.DataFrame, n: int = 6) -> str:
     cand = df.head(n).copy()
     lines = []
     for _, r in cand.iterrows():
-        # Handle NaN safely
         ret = f"{r['Ret']:.1f}" if pd.notna(r['Ret']) else "-"
-        rs = f"{r['RS']:.1f}"
-        
-        lines.append(
-            f"{r['Name']}({r['Ticker']}): Apex {r['Apex']:.2f}, RS {rs}, Ret {ret}%, "
-            f"1M {r['1M']:.1f}%, 3M {r['3M']:.1f}%"
-        )
+        lines.append(f"{r['Name']}({r['Ticker']}): Apex {r['Apex']:.2f}, RS {r['RS']:.1f}, Ret {ret}%, 1M {r['1M']:.1f}%, 3M {r['3M']:.1f}%")
     return "\n".join(lines)
 
 @st.cache_data(ttl=3600)
@@ -514,10 +532,9 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         fund = context.get("fund", {})
         tech = context.get("tech", {})
         
-        # Snapshot string
         snap = f"直近リターン(1M/3M/12M): {tech.get('ret_1m'):.1f}% / {tech.get('ret_3m'):.1f}% / {tech.get('ret_12m'):.1f}%\n"
         snap += f"MaxDD: {tech.get('maxdd'):.1f}%, 高値乖離: {tech.get('highdist'):.1f}%\n"
-        snap += f"予想PER: {fund.get('fwdPE')}, PBR: {fund.get('PBR')}, PEG: {fund.get('pegRatio')}, 目標株価: {fund.get('target')}"
+        snap += f"予想PER: {fund.get('PER')}, PBR: {fund.get('PBR')}, PEG: {fund.get('PEG')}, 目標株価: {fund.get('Target')}"
 
         p = f"""
         銘柄: {context['name']} ({context['ticker']})
@@ -541,7 +558,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         try:
             model = genai.GenerativeModel(m)
             text = model.generate_content(p).text
-            return text.strip()
+            return re.sub(r"\n{2,}", "\n", text).strip()
         except Exception as e:
             if "429" in str(e): time.sleep(1); continue
             
@@ -554,7 +571,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
 def main():
     st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
     
-    # --- Sidebar ---
+    # Sidebar
     with st.sidebar:
         st.markdown("### SYSTEM LOGS")
         if st.session_state.system_logs:
@@ -562,7 +579,7 @@ def main():
                 st.markdown(f"<div class='log-box'>{l}</div>", unsafe_allow_html=True)
         if st.button("CLEAR LOGS"): st.session_state.system_logs = []; st.rerun()
 
-    # --- Header & Controls ---
+    # Header
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
     with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
     with c2: lookback_key = st.selectbox("WINDOW", list(LOOKBACKS.keys()), index=1)
@@ -579,7 +596,7 @@ def main():
     win = LOOKBACKS[lookback_key]
     bench = m_cfg["bench"]
     
-    # --- Data Fetching ---
+    # Sync
     core_tickers = [bench] + list(m_cfg["sectors"].values())
     if sync or "core_df" not in st.session_state:
         with st.spinner("SYNCING MARKET DATA..."):
@@ -596,12 +613,14 @@ def main():
         st.error("BENCHMARK MISSING")
         return
 
-    # --- 1. Market Overview ---
+    # 1. Market Overview
     b_stats = calc_technical_metrics(core_df[bench], core_df[bench], win)
     if not b_stats:
-        st.error("BENCH METRICS FAILED. PLEASE SYNC AGAIN.")
+        st.error("BENCH METRICS FAILED")
         return
 
+    regime, weight_mom = calculate_regime(core_df[bench].dropna())
+    
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
         if s_t in audit["list"]:
@@ -610,9 +629,9 @@ def main():
                 res["Sector"] = s_n
                 sec_rows.append(res)
     
-    # GUARD: Empty Sectors
+    # Guard empty sectors
     if not sec_rows:
-        st.warning("SECTOR ETF DATA INSUFFICIENT.")
+        st.warning("SECTOR DATA INSUFFICIENT")
         top_sec, bot_sec = "N/A", "N/A"
         sdf = pd.DataFrame([{"Sector":"N/A","RS":0.0}])
         spread = 0.0
@@ -633,31 +652,28 @@ def main():
         "headlines": market_context
     })
     
-    # Apply Highlight to Market Text
     market_html = markdown_bold_to_html(market_text).replace("\n", "<br>")
     
     st.markdown(f"""
     <div class='market-box'>
-    <b>MARKET PULSE ({s_date} - {e_date})</b> | Spread: {spread:.1f}pts<br>
+    <b>MARKET PULSE ({s_date} - {e_date})</b> | Spread: {spread:.1f}pts | Regime: {regime}<br>
     {market_html}
     </div>
     """, unsafe_allow_html=True)
 
-    # --- 2. Sector Rotation ---
+    # 2. Sector Rotation
     st.subheader(f"SECTOR ROTATION ({s_date} - {e_date})")
     
-    # Summary Line
     if not sdf.empty and "Ret" in sdf.columns:
         top_row = sdf.iloc[-1]
         bot_row = sdf.iloc[0]
         rot_sum = (
-            f"ベンチマーク: <span class='highlight'>{b_stats['Ret']:.2f}%</span> | "
+            f"ベンチ: <span class='highlight'>{b_stats['Ret']:.2f}%</span> | "
             f"最強: <span class='highlight'>{top_row['Sector']}</span> ({top_row.get('Ret',0):.2f}%) | "
             f"最弱: <span class='highlight-neg'>{bot_row['Sector']}</span> ({bot_row.get('Ret',0):.2f}%)"
         )
         st.markdown(f"<div style='margin-bottom:10px; font-size:13px'>{rot_sum}</div>", unsafe_allow_html=True)
 
-    # Chart Selection Logic
     click_sec = None
     sel = st.session_state.get("sector_chart", None)
     try:
@@ -667,9 +683,9 @@ def main():
             click_sec = sel.selection["points"][0].get("y")
     except: pass
 
-    if click_sec: st.session_state.selected_sector = click_sec
+    if click_sec and click_sec in m_cfg["sectors"]:
+        st.session_state.selected_sector = click_sec
 
-    # Colors
     selected = st.session_state.selected_sector
     colors = ["#333"] * len(sdf)
     if selected and selected in sdf["Sector"].values:
@@ -682,7 +698,6 @@ def main():
     
     st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="sector_chart")
     
-    # Buttons (2 cols + checkmark)
     st.write("SELECT SECTOR:")
     cols = st.columns(2)
     valid_sectors = set(m_cfg["sectors"].keys())
@@ -693,7 +708,6 @@ def main():
             st.session_state.selected_sector = s
             st.rerun()
             
-    # Validate Sector
     if st.session_state.selected_sector not in valid_sectors:
         st.session_state.selected_sector = list(valid_sectors)[0] if valid_sectors else None
         
@@ -702,7 +716,7 @@ def main():
     if target_sector:
         st.caption(f"Current: **{target_sector}** → [Jump to Analysis](#sector_anchor)")
 
-    # --- 3. Sector Forensic ---
+    # 3. Sector Forensic
     st.markdown(f"<div id='sector_anchor'></div>", unsafe_allow_html=True)
     st.divider()
     st.subheader(f"SECTOR FORENSIC: {target_sector}")
@@ -733,17 +747,17 @@ def main():
             results.append(stats)
             
     if not results:
-        st.warning("NO DATA.")
+        st.warning("NO VALID DATA.")
         return
         
     df = pd.DataFrame(results)
-    df["Apex"] = 0.5 * calculate_zscore(df["RS"]) + 0.3 * calculate_zscore(df["Accel"]) + 0.2 * calculate_zscore(df["Ret"])
+    df["Apex"] = weight_mom * calculate_zscore(df["RS"]) + (0.8 - weight_mom) * calculate_zscore(df["Accel"]) + 0.2 * calculate_zscore(df["Ret"])
+    df["Conf"] = 80 + (calculate_zscore(df["Apex"]).abs() * 5).clip(0, 15)
     df = df.sort_values("Apex", ascending=False)
     
-    # --- 4. 5-AGENT SECTOR COUNCIL ---
+    # 4. 5-AGENT SECTOR COUNCIL
     st.markdown("##### 🦅 5-AGENT SECTOR COUNCIL (Top Picks Strategy)")
     
-    # Pass Candidates Data to AI
     cand_ctx = build_sector_candidates_context(df, n=6)
     _, sec_news = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, limit_each=5)
     
@@ -756,19 +770,15 @@ def main():
         "news": sec_news
     })
     st.markdown(parse_agent_debate(sec_ai_raw), unsafe_allow_html=True)
-    
-    # Mini Table for Proof
     st.caption("EVIDENCE: TOP CANDIDATES")
-    st.dataframe(
-        df.head(6)[["Name","Apex","RS","Accel","Ret","1M","HighDist"]],
-        hide_index=True, use_container_width=True
-    )
+    st.dataframe(df.head(6)[["Name","Apex","RS","Accel","Ret","1M","HighDist"]], hide_index=True, use_container_width=True)
 
-    # --- 5. Leaderboard ---
+    # 5. Leaderboard
     st.markdown("##### LEADERBOARD")
     event = st.dataframe(
-        df[["Name", "Apex", "RS", "Accel", "HighDist", "1W", "1M", "12M"]],
+        df[["Name", "Conf", "Apex", "RS", "Accel", "HighDist", "1W", "1M", "12M"]],
         column_config={
+            "Conf": st.column_config.ProgressColumn("Confidence", format="%.0f", min_value=0, max_value=100),
             "Apex": st.column_config.NumberColumn(format="%.2f"),
             "RS": st.column_config.ProgressColumn(format="%.2f%%", min_value=-20, max_value=20),
             "Accel": st.column_config.NumberColumn(format="%.2f"),
@@ -780,7 +790,7 @@ def main():
         hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
     )
     
-    # --- 6. Deep Dive (Report) ---
+    # 6. Deep Dive
     top = df.iloc[0]
     is_default = True
     try:
@@ -795,16 +805,12 @@ def main():
     lbl = f"{top['Name']} (Default: Top Ranked)" if is_default else top['Name']
     st.markdown(f"### 🦅 DEEP DIVE: {lbl}")
     
-    # Fetch Data
     news_items, news_context = get_news_consolidated(top["Ticker"], top["Name"], limit_each=10)
-    fund_data = get_fundamental_data_rich(top["Ticker"])
+    fund_data = get_fundamental_data(top["Ticker"])
     
-    # Tech Context for Report
     tech_ctx = {
-        "ret_1m": top.get("1M", np.nan),
-        "ret_3m": top.get("3M", np.nan),
-        "ret_12m": top.get("12M", np.nan),
-        "maxdd": top.get("MaxDD", np.nan),
+        "ret_1m": top.get("1M", np.nan), "ret_3m": top.get("3M", np.nan),
+        "ret_12m": top.get("12M", np.nan), "maxdd": top.get("MaxDD", np.nan),
         "highdist": top.get("HighDist", np.nan)
     }
     
