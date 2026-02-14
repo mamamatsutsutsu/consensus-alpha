@@ -24,14 +24,14 @@ except ImportError:
     st.error("CRITICAL: 'universe.py' not found.")
     st.stop()
 
-# --- UTILS & CACHE ---
+# --- UTILS ---
 def log_system_event(msg: str, level: str = "INFO", tag: str = "SYS"):
     timestamp = datetime.now().strftime("%H:%M:%S")
     line = f"[{timestamp}] [{level}] [{tag}] {msg}"
     print(line)
-    if "system_logs" not in st.session_state: st.session_state.system_logs = []
-    st.session_state.system_logs.append(line)
-    st.session_state.system_logs = st.session_state.system_logs[-300:]
+    if "system_logs" in st.session_state:
+        st.session_state.system_logs.append(line)
+        st.session_state.system_logs = st.session_state.system_logs[-300:]
 
 MARKETS = universe.MARKETS
 NAME_DB = universe.NAME_DB
@@ -78,20 +78,26 @@ def outlook_date_slots(days: List[int] = [7, 21, 35, 49, 63, 84]) -> List[str]:
     base = datetime.now().date()
     return [(base + timedelta(days=d)).strftime("%Y/%m/%d") for d in days]
 
+def safe_link_button(label: str, url: str, use_container_width: bool = True):
+    if not url:
+        st.button(label, disabled=True, use_container_width=use_container_width)
+        return
+    try:
+        fn = getattr(st, "link_button", None)
+        if callable(fn):
+            fn(label, url, use_container_width=use_container_width)
+        else:
+            st.markdown(f"- [{label}]({url})")
+    except Exception:
+        st.markdown(f"- [{label}]({url})")
+
 def build_ir_links(name: str, ticker: str, website: Optional[str], market_key: str) -> Dict[str, str]:
     q_site = urllib.parse.quote(name)
     q_ir = urllib.parse.quote(f"{name} IR")
     if "US" in market_key:
         q_deck = urllib.parse.quote(f"{name} investor presentation earnings pdf")
     else:
-        if website:
-            try:
-                dom = urllib.parse.urlparse(website).netloc
-                q_deck = urllib.parse.quote(f"{name} 決算説明資料 pdf site:{dom}")
-            except:
-                q_deck = urllib.parse.quote(f"{name} 決算説明資料 pdf")
-        else:
-            q_deck = urllib.parse.quote(f"{name} 決算説明資料 pdf")
+        q_deck = urllib.parse.quote(f"{name} 決算説明資料 pdf")
             
     official = website if website and website.startswith("http") else f"https://www.google.com/search?q={q_site}+official+site"
     
@@ -228,6 +234,14 @@ def get_fundamental_data(ticker: str) -> Dict[str, Any]:
         }
     except: return {"PRICE": np.nan, "MCap": np.nan, "PER": np.nan, "FwdPE": np.nan, "PBR": np.nan, "PEG": np.nan}
 
+def pick_fund_row(cand_fund: pd.DataFrame, ticker: str) -> Dict[str, Any]:
+    try:
+        if cand_fund is None or cand_fund.empty: return {}
+        m = cand_fund[cand_fund["Ticker"] == ticker]
+        if m.empty: return {}
+        return m.iloc[0].to_dict()
+    except: return {}
+
 @st.cache_data(ttl=3600)
 def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
     out = {}
@@ -312,8 +326,8 @@ def enforce_da_dearu_soft(text: str) -> str:
     return text
 
 def market_to_html(text: str) -> str:
-    text = re.sub(r"(^\(\+\).*$)", r"<span class='highlight'>\1</span>", text, flags=re.MULTILINE)
-    text = re.sub(r"(^\(\-\).*$)", r"<span class='highlight-neg'>\1</span>", text, flags=re.MULTILINE)
+    text = re.sub(r"(^\(\+\s*\).*$)", r"<span class='highlight'>\1</span>", text, flags=re.MULTILINE)
+    text = re.sub(r"(^\(\-\s*\).*$)", r"<span class='highlight-neg'>\1</span>", text, flags=re.MULTILINE)
     return text.replace("\n", "<br>")
 
 @st.cache_data(ttl=1800)
@@ -519,10 +533,114 @@ def parse_agent_debate(text: str) -> str:
 # 5. MAIN UI LOGIC (AlphaLens Class)
 # ==========================================
 def run():
-    # --- UI INIT & STYLES ---
+    # --- 1. INITIALIZE STATE ---
+    if "system_logs" not in st.session_state: st.session_state.system_logs = []
+    if "selected_sector" not in st.session_state: st.session_state.selected_sector = None
+    if "last_market_key" not in st.session_state: st.session_state.last_market_key = None
+    if "last_lookback_key" not in st.session_state: st.session_state.last_lookback_key = None
+
+    # --- UI STYLES ---
     st.markdown("""
 <style>
-/* CSS IMPORTED FROM HEADER */
+@import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;600;700&family=Orbitron:wght@400;600;900&family=JetBrains+Mono:wght@300;400;600&family=M+PLUS+1+Code:wght@300;400;700&display=swap');
+
+:root{
+  --bg:#000; --panel:#0a0a0a; --card:#111; --border:#333;
+  --accent:#00f2fe; --accent2:#ff0055; --text:#e6e6e6;
+  --fz-hero: clamp(28px, 3.2vw, 40px);
+  --fz-h1: clamp(18px, 1.8vw, 24px);
+  --fz-h2: clamp(15px, 1.4vw, 18px);
+  --fz-body: clamp(12.5px, 1.05vw, 14px);
+  --fz-note: clamp(10.5px, 0.95vw, 12px);
+  --fz-table: 11px;
+}
+
+/* Base */
+html, body, .stApp{
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  font-family: 'Zen Kaku Gothic New', sans-serif !important;
+  font-size: var(--fz-body) !important;
+  line-height: 1.85 !important;
+}
+*{ letter-spacing: 0.02em !important; }
+
+/* Headings / brand */
+h1, h2, h3, .brand, .orbitron, div[data-testid="stMetricValue"]{
+  font-family: 'Orbitron', sans-serif !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase;
+}
+.brand{ font-size: var(--fz-hero) !important; font-weight: 900 !important; }
+
+/* Notes / definitions */
+.def-text{
+  font-size: var(--fz-note) !important;
+  color: #8a8a8a !important;
+  line-height: 1.6 !important;
+  border-bottom: 1px solid #333;
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+.caption-text{
+  font-size: var(--fz-note) !important;
+  color: #6f6f6f !important;
+  font-family: 'Orbitron', sans-serif !important;
+  letter-spacing: 0.05em !important;
+}
+div[data-testid="stCaptionContainer"] * { font-family:'Orbitron',sans-serif !important; letter-spacing:0.06em !important; }
+div[data-testid="stMarkdownContainer"] small { font-family:'Orbitron',sans-serif !important; }
+
+/* Data / numbers */
+.mono, code, pre, div[data-testid="stDataFrame"] *{
+  font-family: 'M PLUS 1 Code', monospace !important;
+}
+div[data-testid="stDataFrame"] *{
+  font-size: var(--fz-table) !important;
+  color: #f0f0f0 !important;
+}
+
+/* Report */
+.report-box{
+  background: #0a0a0a; border-top: 2px solid #00f2fe;
+  padding: 22px; margin-top: 12px;
+  font-size: var(--fz-body) !important;
+  line-height: 2.0;
+  color: #eee;
+  white-space: pre-wrap;
+}
+.kpi-strip{
+  font-family: 'M PLUS 1 Code', monospace !important;
+  font-size: var(--fz-note) !important;
+  color: #00f2fe !important;
+  margin: 6px 0 10px 0;
+}
+
+/* Market Box */
+.market-box{
+  background:#080808; border:1px solid #333; padding:20px; margin:10px 0 18px 0;
+}
+
+/* Agent Council */
+.agent-row{ display:flex; gap:12px; border:1px solid #222; padding:10px; margin:8px 0; background:#0b0b0b; }
+.agent-label{ min-width:70px; max-width:70px; font-family:'Orbitron',sans-serif !important; font-size:12px; color:#9adbe2; text-align:right; font-weight:700; word-break:break-word; }
+.agent-content{ flex:1; white-space:pre-wrap; line-height:1.9; overflow-wrap:anywhere; }
+.agent-outlook{ border:1px solid #1d3c41; padding:12px; margin:8px 0; background:#061012; border-left:5px solid #00f2fe; }
+
+/* Highlights */
+.highlight{ color:#00f2fe; font-weight:700; }
+.highlight-neg{ color:#ff0055; font-weight:700; }
+
+/* Buttons */
+button{
+  background:#111 !important;
+  color: var(--accent) !important;
+  border: 1px solid #444 !important;
+  border-radius: 0px !important;
+  font-family: 'Orbitron', sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+}
 </style>
 """, unsafe_allow_html=True)
     
@@ -538,7 +656,7 @@ def run():
         sync = st.button("SYNC", type="primary", use_container_width=True)
 
     # Logic: Reset Sector if Market OR Lookback changes
-    if (st.session_state.last_market_key != market_key) or (st.session_state.get("last_lookback_key") != lookback_key):
+    if (st.session_state.last_market_key != market_key) or (st.session_state.last_lookback_key != lookback_key):
         st.session_state.selected_sector = None
         st.session_state.last_market_key = market_key
         st.session_state.last_lookback_key = lookback_key
@@ -621,7 +739,6 @@ def run():
     if not st.session_state.selected_sector:
         best_row = sdf_disp.iloc[0]
         st.session_state.selected_sector = best_row["Sector"]
-        # Log removed from UI, but internal state updated
 
     click_sec = st.session_state.selected_sector
     colors = ["#333"] * len(sdf_disp)
@@ -702,14 +819,14 @@ def run():
     # Build context lines
     cand_lines = []
     for _, r in top3.iterrows():
-        f = cand_fund[cand_fund["Ticker"]==r["Ticker"]].iloc[0]
+        f = pick_fund_row(cand_fund, r["Ticker"])
         cand_lines.append(
             f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, RS {r['RS']:.2f}, Accel {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, "
             f"MCap {sfloat(f.get('MCap',0))/1e9:.1f}B, PER {dash(f.get('PER'))}, PBR {dash(f.get('PBR'))}"
         )
     if not neg.empty:
         nr = neg.iloc[0]
-        f = cand_fund[cand_fund["Ticker"]==nr["Ticker"]].iloc[0]
+        f = pick_fund_row(cand_fund, nr["Ticker"])
         cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {dash(f.get('PER'))}")
 
     _, sec_news, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=6)
@@ -736,7 +853,7 @@ def run():
     ev_df["OpMargin"] = ev_df["OpMargin"].apply(pct)
     ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
     
-    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
+    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","1M","3M","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
 
     # 5. Leaderboard
     universe_cnt = len(stock_list)
@@ -842,12 +959,12 @@ def run():
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
         st.markdown(f"<div class='report-box'><b>ANALYST REPORT</b><br>{report_txt}</div>", unsafe_allow_html=True)
-        # Links
+        # Links with fallback
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
         lc1, lc2, lc3 = st.columns(3)
-        with lc1: st.link_button("OFFICIAL", links["official"], use_container_width=True)
-        with lc2: st.link_button("IR SEARCH", links["ir_search"], use_container_width=True)
-        with lc3: st.link_button("EARNINGS DECK", links["earnings_deck"], use_container_width=True)
+        with lc1: safe_link_button("OFFICIAL", links["official"], use_container_width=True)
+        with lc2: safe_link_button("IR SEARCH", links["ir_search"], use_container_width=True)
+        with lc3: safe_link_button("EARNINGS DECK", links["earnings_deck"], use_container_width=True)
 
         st.caption(
             "PEER LOGIC | Nearest Market Cap: |MCap(peer)−MCap(target)|が小さい順に抽出（同一セクター内） | "
@@ -855,8 +972,9 @@ def run():
         )
         try:
             target_mcap = top["MCap"] if pd.notna(top["MCap"]) else 0
-            df_sorted["Dist"] = (df_sorted["MCap"] - target_mcap).abs()
-            df_peers = df_sorted.sort_values("Dist").iloc[1:5]
+            df_peers_base = df_sorted.copy()
+            df_peers_base["Dist"] = (pd.to_numeric(df_peers_base["MCap"], errors="coerce") - float(target_mcap or 0)).abs()
+            df_peers = df_peers_base.sort_values("Dist").iloc[1:5]
             st.dataframe(df_peers[["Name", "ROE", "RevGrow", "PER", "PBR", "RS", "12M"]], hide_index=True)
         except: pass
 
