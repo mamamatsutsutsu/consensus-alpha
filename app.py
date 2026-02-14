@@ -122,8 +122,9 @@ except ImportError:
 def check_access():
     if not APP_PASS: return True
     if st.session_state.get("auth", False): return True
-    c1, c2, c3 = st.columns([1,2,1])
-    with c2:
+    
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
         st.markdown("<br><br><h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
         with st.form("auth"):
             p = st.text_input("PASSCODE", type="password")
@@ -185,7 +186,7 @@ MARKETS = {
 
 # FULL NAME DB
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"通信","1631.T":"電機","1621.T":"自動車","1632.T":"医薬","1623.T":"銀行","1624.T":"金融","1622.T":"商社","1630.T":"機械","1617.T":"エネ","1618.T":"建設","1619.T":"素材","1633.T":"食品","1628.T":"電力","1625.T":"不動産","1629.T":"鉄鋼","1627.T":"サービス","1620.T":"産機",
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
@@ -301,9 +302,9 @@ def check_ai_status():
     return "ONLINE"
 
 def call_ai(ticker: str, name: str, stats: Dict) -> str:
-    # 1. Fallback Strategy for Gemini models
-    # Try flash -> then pro -> then 1.0
-    models_to_try = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
+    # UPDATED: Use available model in the provided list
+    # The user has access to gemini-2.0-flash, gemini-2.0-flash-lite, gemini-exp-1206
+    models_to_try = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-exp-1206"]
     
     if HAS_LIB and API_KEY:
         for m_name in models_to_try:
@@ -322,8 +323,7 @@ def call_ai(ticker: str, name: str, stats: Dict) -> str:
                 """
                 resp = model.generate_content(prompt)
                 if resp.text: return resp.text
-            except Exception as e:
-                # Continue to next model if this one fails
+            except Exception:
                 continue
                 
     # 2. Rule-based Fallback
