@@ -1,5 +1,4 @@
 import os
-import math
 import time
 import urllib.parse
 import urllib.request
@@ -14,141 +13,156 @@ import streamlit as st
 import yfinance as yf
 
 # =========================
-# 1. Phantom UI Configuration
+# 1. Phantom UI Configuration (ALL ORBITRON)
 # =========================
-st.set_page_config(page_title="AlphaLens Sovereign", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AlphaLens Sovereign", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
-/* FONT IMPORTS */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+/* FONT IMPORT */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=IBM+Plex+Sans+JP:wght@400;700&display=swap');
 
-/* --- PHANTOM DARK THEME VARIABLES --- */
+/* --- PHANTOM DARK THEME --- */
 :root {
-  --bg-app: #050505;
-  --bg-panel: #0d1117;
-  --bg-card: #161b22;
-  --border: #30363d;
+  --bg-app: #000000;
+  --bg-panel: #050505;
+  --bg-card: #0a0a0a;
+  --border: #333333;
   --accent: #00f2fe;
-  --text-main: #e6edf3;
-  --text-sub: #8b949e;
+  --text-main: #e0e0e0;
+  --text-dim: #888888;
 }
 
-/* GLOBAL OVERRIDES */
-.stApp { background-color: var(--bg-app) !important; color: var(--text-main) !important; font-family: 'Inter', sans-serif !important; }
-h1, h2, h3, h4, h5, h6, p, span, div { color: var(--text-main) !important; }
-a { color: var(--accent) !important; text-decoration: none; }
+/* GLOBAL FONT FORCE (ALL ORBITRON) */
+html, body, [class*="css"], div, button, span, p, h1, h2, h3, h4, h5, h6, input, select, textarea {
+  font-family: 'Orbitron', 'IBM Plex Sans JP', sans-serif !important;
+  letter-spacing: 1px !important;
+  color: var(--text-main) !important;
+}
+
+/* APP BACKGROUND */
+.stApp { background-color: var(--bg-app) !important; }
 
 /* BRANDING */
-.brand-box { text-align: center; margin-bottom: 30px; padding-top: 20px; }
+.brand-box { text-align: center; margin-bottom: 20px; padding: 20px 0; border-bottom: 1px solid var(--border); }
 .brand-title {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 42px;
-  font-weight: 900;
-  background: linear-gradient(135deg, #ffffff 0%, #00f2fe 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 15px rgba(0, 242, 254, 0.4));
-  letter-spacing: 4px;
+  font-size: 36px; font-weight: 900;
+  background: linear-gradient(90deg, #FFF 0%, #00f2fe 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 25px rgba(0, 242, 254, 0.6);
 }
-.brand-sub { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent); letter-spacing: 2px; opacity: 0.8; }
 
 /* CONTAINERS */
 .deck {
-  background: rgba(13, 17, 23, 0.8);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: 0px; 
+  padding: 15px; margin-bottom: 20px;
+  box-shadow: 0 0 15px rgba(0, 242, 254, 0.15);
 }
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 12px;
+  border-radius: 4px;
+  padding: 15px; margin-bottom: 10px;
+}
+
+/* TABLE STYLING (NEON) */
+div[data-testid="stDataFrame"] {
+  background-color: #000000 !important;
+  border: 1px solid var(--accent) !important;
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
+}
+div[data-testid="stDataFrame"] * {
+  font-family: 'Orbitron', monospace !important;
+  color: #e0e0e0 !important;
+}
+[data-testid="stHeader"] {
+  background-color: #0a0a0a !important;
+  border-bottom: 1px solid var(--accent) !important;
+}
+
+/* BUTTONS (HIGH VISIBILITY) */
+div.stButton > button {
+  background-color: #000000 !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0px !important;
+  font-weight: 700 !important;
+  padding: 0.5rem 1rem !important;
+  text-transform: uppercase;
+}
+div.stButton > button:hover, div.stButton > button:active {
+  background-color: var(--accent) !important;
+  color: #000000 !important;
+  border-color: #ffffff !important;
+  box-shadow: 0 0 20px var(--accent) !important;
 }
 
 /* METRICS */
 .kpi-box {
-  background: #0a0c10;
-  border-left: 3px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 14px;
+  background: #050505; border: 1px solid var(--border);
+  padding: 10px; text-align: center; margin-bottom: 5px;
 }
-.kpi-label { font-family: 'Orbitron', sans-serif; font-size: 10px; color: var(--text-sub); text-transform: uppercase; }
-.kpi-val { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 700; color: var(--text-main); }
-.status-green { border-left-color: #238636 !important; }
-.status-yellow { border-left-color: #d29922 !important; }
-.status-red { border-left-color: #da3633 !important; }
-
-/* BUTTONS (High Contrast Force) */
-div.stButton > button {
-  background-color: var(--bg-card) !important;
-  color: var(--text-main) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 8px !important;
-  padding: 0.5rem 1rem !important;
-  font-weight: 700 !important;
-  font-family: 'Orbitron', sans-serif !important;
-  transition: all 0.2s ease !important;
-}
-div.stButton > button:hover {
-  border-color: var(--accent) !important;
-  color: var(--accent) !important;
-  box-shadow: 0 0 12px rgba(0, 242, 254, 0.25) !important;
-}
-div.stButton > button:active { transform: scale(0.98); }
+.kpi-val { font-size: 18px; color: var(--accent); font-weight: 700; text-shadow: 0 0 5px var(--accent); }
+.kpi-label { font-size: 10px; color: var(--text-dim); }
 
 /* AI BOX */
 .ai-box {
-  border: 1px solid rgba(0, 242, 254, 0.3);
-  background: linear-gradient(180deg, rgba(0, 242, 254, 0.05) 0%, rgba(0,0,0,0) 100%);
-  border-radius: 12px; padding: 20px; margin-top: 15px;
+  border: 1px dashed var(--accent);
+  background: rgba(0, 242, 254, 0.05);
+  padding: 15px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
-/* BADGES */
-.badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 10px; font-weight: 800; margin-right: 8px; border: 1px solid; font-family: 'Orbitron', sans-serif; }
-.b-strong { border-color:#1f6feb; color:#58a6ff; background:rgba(31,111,235,0.1); }
-.b-watch { border-color:#d29922; color:#f0b429; background:rgba(210,153,34,0.1); }
-.b-avoid { border-color:#da3633; color:#f85149; background:rgba(218,54,51,0.1); }
+/* SIDEBAR DIAGNOSTIC */
+.diag-box {
+  border: 1px solid #da3633;
+  background: rgba(218, 54, 51, 0.1);
+  padding: 10px;
+  font-size: 10px;
+  margin-bottom: 10px;
+}
+.diag-ok { border-color: #238636; background: rgba(35, 134, 54, 0.1); }
 
-/* UTILS */
-.muted { color: var(--text-sub) !important; font-size: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# 2. Config & Secrets
+# 2. Secrets & AI Setup (With Diagnostics)
 # =========================
 API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 APP_PASS = st.secrets.get("APP_PASSWORD")
 
-HAS_GENAI = False
-if API_KEY:
+# Library Check
+try:
+    import google.generativeai as genai
+    HAS_GENAI_LIB = True
+except ImportError:
+    HAS_GENAI_LIB = False
+
+# Setup GenAI if possible
+if HAS_GENAI_LIB and API_KEY:
     try:
-        import google.generativeai as genai
         genai.configure(api_key=API_KEY)
-        HAS_GENAI = True
-    except ImportError: pass
+    except: pass
 
 def check_auth():
     if not APP_PASS: return True
     if st.session_state.get("auth", False): return True
     
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         with st.form("login"):
-            st.markdown("<h3 style='text-align:center;'>🔒 SECURITY ACCESS</h3>", unsafe_allow_html=True)
-            pwd = st.text_input("Passcode", type="password")
-            if st.form_submit_button("AUTHENTICATE", use_container_width=True):
+            st.markdown("<h3 style='text-align:center;'>ACCESS CONTROL</h3>", unsafe_allow_html=True)
+            pwd = st.text_input("PASSCODE", type="password")
+            if st.form_submit_button("ENTER SYSTEM", use_container_width=True):
                 if pwd == APP_PASS:
                     st.session_state.auth = True
                     st.rerun()
-                else: st.error("INVALID CODE")
+                else: st.error("DENIED")
     return False
 
 if not check_auth(): st.stop()
@@ -159,53 +173,39 @@ if not check_auth(): st.stop()
 LOOKBACKS = {"1W": 5, "1M": 21, "3M": 63, "12M": 252}
 FETCH_PERIOD = "24mo"
 
-# US SECTORS
-US_SECTOR_ETF = {
-    "Technology": "XLK", "Healthcare": "XLV", "Financials": "XLF", "Comm Services": "XLC",
-    "Cons. Disc": "XLY", "Cons. Staples": "XLP", "Industrials": "XLI", "Energy": "XLE",
-    "Materials": "XLB", "Utilities": "XLU", "Real Estate": "XLRE"
-}
+US_SECTOR_ETF = {"Tech": "XLK", "Health": "XLV", "Fin": "XLF", "Comm": "XLC", "Disc": "XLY", "Staples": "XLP", "Ind": "XLI", "Energy": "XLE", "Mat": "XLB", "Util": "XLU", "RE": "XLRE"}
+JP_SECTOR_ETF = {"情報通信": "1626.T", "電機精密": "1631.T", "自動車": "1621.T", "医薬品": "1632.T", "銀行": "1623.T", "金融他": "1624.T", "商社小売": "1622.T", "機械": "1630.T", "エネ": "1617.T", "建設資材": "1618.T", "素材化学": "1619.T", "食品": "1633.T", "電力ガス": "1628.T", "不動産": "1625.T", "鉄鋼非鉄": "1629.T", "サービス": "1627.T", "産業機械": "1620.T"}
 
-# JP SECTORS
-JP_SECTOR_ETF = {
-    "情報通信": "1626.T", "電機・精密": "1631.T", "自動車・輸送": "1621.T", "医薬品": "1632.T",
-    "銀行": "1623.T", "金融(除銀行)": "1624.T", "商社・小売": "1622.T", "機械": "1630.T",
-    "エネルギー": "1617.T", "建設・資材": "1618.T", "素材・化学": "1619.T", "食品": "1633.T",
-    "電力・ガス": "1628.T", "不動産": "1625.T", "鉄鋼・非鉄": "1629.T", "サービス": "1627.T",
-    "産業機械": "1620.T"
-}
-
-# STOCK LISTS
 US_STOCKS = {
-    "Technology": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
-    "Comm Services": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
-    "Healthcare": ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","PFE","ISRG","DHR","VRTX","GILD","REGN","BMY","CVS","CI","SYK","BSX","MDT","ZTS","HCA","MCK"],
-    "Financials": ["JPM","BAC","WFC","V","MA","AXP","GS","MS","BLK","C","SCHW","SPGI","PGR","CB","MMC","KKR","BX","TRV","AFL","MET","PRU","ICE","COF"],
-    "Cons. Disc": ["AMZN","TSLA","HD","MCD","NKE","SBUX","LOW","BKNG","TJX","CMG","MAR","HLT","YUM","LULU","GM","F","ROST","ORLY","AZO","DHI","LEN"],
-    "Cons. Staples": ["PG","KO","PEP","COST","WMT","PM","MO","MDLZ","CL","KMB","GIS","KHC","KR","STZ","EL","TGT","DG","ADM","SYY"],
-    "Industrials": ["GE","CAT","DE","HON","UNP","UPS","RTX","LMT","BA","MMM","ETN","EMR","ITW","WM","NSC","CSX","GD","NOC","TDG","PCAR","FDX","CTAS"],
+    "Tech": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
+    "Comm": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
+    "Health": ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","PFE","ISRG","DHR","VRTX","GILD","REGN","BMY","CVS","CI","SYK","BSX","MDT","ZTS","HCA","MCK"],
+    "Fin": ["JPM","BAC","WFC","V","MA","AXP","GS","MS","BLK","C","SCHW","SPGI","PGR","CB","MMC","KKR","BX","TRV","AFL","MET","PRU","ICE","COF"],
+    "Disc": ["AMZN","TSLA","HD","MCD","NKE","SBUX","LOW","BKNG","TJX","CMG","MAR","HLT","YUM","LULU","GM","F","ROST","ORLY","AZO","DHI","LEN"],
+    "Staples": ["PG","KO","PEP","COST","WMT","PM","MO","MDLZ","CL","KMB","GIS","KHC","KR","STZ","EL","TGT","DG","ADM","SYY"],
+    "Ind": ["GE","CAT","DE","HON","UNP","UPS","RTX","LMT","BA","MMM","ETN","EMR","ITW","WM","NSC","CSX","GD","NOC","TDG","PCAR","FDX","CTAS"],
     "Energy": ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO","OXY","KMI","WMB","HAL","BKR","DVN","HES","FANG","TRGP","OKE"],
-    "Materials": ["LIN","APD","SHW","FCX","ECL","NEM","DOW","DD","NUE","MLM","VMC","CTVA","PPG","ALB","CF","MOS"],
-    "Utilities": ["NEE","DUK","SO","AEP","SRE","EXC","XEL","D","PEG","ED","EIX","WEC","AWK","ES","PPL","ETR"],
-    "Real Estate": ["PLD","AMT","CCI","EQIX","SPG","PSA","O","WELL","DLR","AVB","EQR","VICI","CSGP","SBAC","IRM"],
+    "Mat": ["LIN","APD","SHW","FCX","ECL","NEM","DOW","DD","NUE","MLM","VMC","CTVA","PPG","ALB","CF","MOS"],
+    "Util": ["NEE","DUK","SO","AEP","SRE","EXC","XEL","D","PEG","ED","EIX","WEC","AWK","ES","PPL","ETR"],
+    "RE": ["PLD","AMT","CCI","EQIX","SPG","PSA","O","WELL","DLR","AVB","EQR","VICI","CSGP","SBAC","IRM"],
 }
 
 JP_STOCKS = {
     "情報通信": ["9432.T","9433.T","9434.T","9984.T","4689.T","4755.T","9613.T","9602.T","4385.T","6098.T","3659.T","3765.T"],
-    "電機・精密": ["8035.T","6857.T","6146.T","6920.T","6758.T","6501.T","6723.T","6981.T","6954.T","7741.T","6702.T","6503.T","6752.T","7735.T","6861.T"],
-    "自動車・輸送": ["7203.T","7267.T","6902.T","7201.T","7269.T","7270.T","7272.T","9101.T","9104.T","9020.T","9022.T","9005.T"],
+    "電機精密": ["8035.T","6857.T","6146.T","6920.T","6758.T","6501.T","6723.T","6981.T","6954.T","7741.T","6702.T","6503.T","6752.T","7735.T","6861.T"],
+    "自動車": ["7203.T","7267.T","6902.T","7201.T","7269.T","7270.T","7272.T","9101.T","9104.T","9020.T","9022.T","9005.T"],
     "医薬品": ["4502.T","4568.T","4519.T","4503.T","4507.T","4523.T","4578.T","4151.T","4528.T","4506.T"],
     "銀行": ["8306.T","8316.T","8411.T","8308.T","8309.T","7182.T","5831.T","8331.T","8354.T"],
-    "金融(除銀行)": ["8591.T","8604.T","8766.T","8725.T","8750.T","8697.T","8630.T","8570.T"],
-    "商社・小売": ["8001.T","8031.T","8058.T","8053.T","8002.T","8015.T","3382.T","9983.T","8267.T","2914.T","7453.T","3092.T"],
+    "金融他": ["8591.T","8604.T","8766.T","8725.T","8750.T","8697.T","8630.T","8570.T"],
+    "商社小売": ["8001.T","8031.T","8058.T","8053.T","8002.T","8015.T","3382.T","9983.T","8267.T","2914.T","7453.T","3092.T"],
     "機械": ["6301.T","7011.T","7012.T","6367.T","6273.T","6113.T","6473.T","6326.T"],
-    "エネルギー": ["1605.T","5020.T","9501.T","3407.T","4005.T"],
-    "建設・資材": ["1925.T","1928.T","1801.T","1802.T","1812.T","5201.T","5332.T"],
-    "素材・化学": ["4063.T","4452.T","4188.T","4901.T","4911.T","4021.T","4631.T","3402.T"],
+    "エネ": ["1605.T","5020.T","9501.T","3407.T","4005.T"],
+    "建設資材": ["1925.T","1928.T","1801.T","1802.T","1812.T","5201.T","5332.T"],
+    "素材化学": ["4063.T","4452.T","4188.T","4901.T","4911.T","4021.T","4631.T","3402.T"],
     "食品": ["2801.T","2802.T","2269.T","2502.T","2503.T","2201.T","2002.T"],
-    "電力・ガス": ["9501.T","9503.T","9531.T","9532.T"],
+    "電力ガス": ["9501.T","9503.T","9531.T","9532.T"],
     "不動産": ["8801.T","8802.T","8830.T","3289.T","3003.T","3231.T"],
-    "鉄鋼・非鉄": ["5401.T","5411.T","5713.T","5406.T","5711.T","5802.T"],
+    "鉄鋼非鉄": ["5401.T","5411.T","5713.T","5406.T","5711.T","5802.T"],
     "サービス": ["4661.T","9735.T","4324.T","2127.T","6028.T","2412.T","4689.T"],
     "産業機械": ["6146.T","6460.T","6471.T","6268.T"]
 }
@@ -215,7 +215,6 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SECTOR_ETF, "stocks": JP_STOCKS},
 }
 
-# --- NAME DB ---
 NAME_DB = {
     "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"エネ資源","1618.T":"建設資材","1619.T":"素材化学","1633.T":"食品","1628.T":"電力ガス","1625.T":"不動産","1629.T":"鉄鋼非鉄","1627.T":"サービス","1620.T":"産業機械",
@@ -238,7 +237,7 @@ NAME_DB = {
 def get_display_name(t: str) -> str: return NAME_DB.get(t, t)
 
 # =========================
-# 4. Engine (Revised & Corrected)
+# 4. Engine
 # =========================
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_bulk(tickers: Tuple[str, ...]) -> pd.DataFrame:
@@ -280,7 +279,6 @@ def calc_stats(s: pd.Series, b: pd.Series, win: int) -> Dict:
     half = max(1, win//2)
     p_half = (s_win.iloc[-1]/s_win.iloc[-half-1]-1)*100
     accel = p_half - (p_ret/2)
-    
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
     # Stable
@@ -350,15 +348,24 @@ def get_news_robust(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
     except: pass
     return y_news, g_news
 
+def check_ai_health():
+    # Diagnostic for Sidebar
+    if not HAS_GENAI_LIB: return "LIBRARY_MISSING"
+    if not API_KEY: return "KEY_MISSING"
+    return "ONLINE"
+
 def call_gemini(ticker: str, name: str, stats: Dict) -> str:
-    if HAS_GENAI and API_KEY:
+    # 1. Try Gemini
+    if HAS_GENAI_LIB and API_KEY:
         try:
             model = genai.GenerativeModel("gemini-pro")
             prompt = f"""
-            あなたはプロのファンドマネージャーです。以下の銘柄について「モメンタム」「リスク」「マクロ」の3名のエージェントとして議論し、最終判断を日本語で下してください。
+            プロの投資家として、以下の銘柄を議論（モメンタム、リスク、マクロ視点）し、結論を出せ。
+            日本語で、断定的に。
             
             銘柄: {name} ({ticker})
-            指標: RS {stats['RS']:.2f}% (市場比), Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%, 12M {stats['12M']:.1f}%
+            指標: RS {stats['RS']:.2f}% (市場比), Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
+            騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%, 12M {stats.get('12M','N/A')}%
             
             形式:
             【モメンタム】...
@@ -367,17 +374,31 @@ def call_gemini(ticker: str, name: str, stats: Dict) -> str:
             """
             resp = model.generate_content(prompt)
             if resp and resp.text: return resp.text
-        except: pass
+        except Exception as e:
+            return f"⚠️ AI ERROR: {str(e)}"
             
+    # 2. Fallback
     v = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
-    return f"※AIキー未設定 (Rule-based):\nトレンド: {v}\nRS: {stats['RS']:.2f}% | 12M: {stats['12M']:.1f}%"
+    msg = "LIB MISSING" if not HAS_GENAI_LIB else "KEY MISSING"
+    return f"※AI UNAVAILABLE ({msg}). RULE-BASED:\nTREND: {v}\nRS: {stats['RS']:.2f}% | 12M: {stats['12M']:.1f}%"
 
 # =========================
 # 5. Main UI
 # =========================
 def main():
-    st.markdown("<div class='brand-box'><div class='brand-title'>ALPHALENS</div><div class='brand-sub'>COMMAND CENTER v35.0</div></div>", unsafe_allow_html=True)
+    # Sidebar: Diagnostic
+    with st.sidebar:
+        st.markdown("### 🤖 SYSTEM STATUS")
+        status = check_ai_health()
+        color = "#238636" if status == "ONLINE" else "#da3633"
+        st.markdown(f"<div style='border:1px solid {color}; padding:10px; color:{color}; font-weight:bold; text-align:center;'>{status}</div>", unsafe_allow_html=True)
+        if status != "ONLINE":
+            st.caption("Check requirements.txt (google-generativeai) or secrets.toml (GEMINI_API_KEY).")
 
+    # Header
+    st.markdown("<div class='brand-box'><div class='brand-title'>ALPHALENS</div><div class='brand-sub'>COMMAND CENTER v36.0</div></div>", unsafe_allow_html=True)
+
+    # Deck
     with st.container():
         st.markdown("<div class='deck'>", unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
@@ -462,8 +483,11 @@ def main():
     for t in [x for x in s_audit["list"] if x != bench]:
         stats = calc_stats(sec_df[t], sec_df[bench], win)
         if stats:
+            stats.update(calc_stats(sec_df[t], sec_df[bench], win)) # Re-calc for safety
             stats["Ticker"] = t
             stats["Name"] = get_display_name(t)
+            # Add multi horizon
+            stats.update(calc_returns_multi(sec_df[t]))
             results.append(stats)
             
     if not results:
