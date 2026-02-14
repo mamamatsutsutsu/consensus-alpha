@@ -7,35 +7,86 @@ import json
 from io import StringIO
 from datetime import datetime, timezone
 import time
+import xml.etree.ElementTree as ET
 
 # --- 1. 設定 & UI構成 ---
-st.set_page_config(page_title="ConsensusAlpha", layout="wide")
-st.title("🧠 ConsensusAlpha: 投資委員会エージェント")
+st.set_page_config(page_title="ConsensusAlpha Global v2", layout="wide")
+st.title("🧠 ConsensusAlpha: グローバル投資委員会 v2.0")
+
+# --- 2. セキュリティ & API設定 ---
+# Secretsから取得、なければサイドバー（ローカル開発用）
+api_key = st.secrets.get("GEMINI_API_KEY")
+if not api_key:
+    api_key = st.sidebar.text_input("Gemini API Key (Local only)", type="password")
+
+if not api_key:
+    st.warning("APIキーが設定されていません。StreamlitのSecretsに設定するか、サイドバーに入力してください。")
+    st.stop()
+
+client = genai.Client(api_key=api_key)
 
 # サイドバー設定
-st.sidebar.header("設定")
-api_key = st.sidebar.text_input("Gemini API Key", type="password", value="") # 毎回入れるか、コードに直書き
-TICKERS = ["NVDA", "AAPL", "TSLA", "MSFT", "GOOGL", "AMZN", "META"]
+st.sidebar.header("🔧 分析設定")
+market = st.sidebar.selectbox("分析対象の市場", ["米国株 (US)", "日本株 (JP)"])
+
+if market == "米国株 (US)":
+    DEFAULT_TICKERS = ["NVDA", "AAPL", "TSLA", "MSFT", "GOOGL"]
+    market_suffix = "US"
+    news_params = {"hl": "en-US", "gl": "US", "ceid": "US:en"}
+else:
+    DEFAULT_TICKERS = ["7203", "6758", "9984", "8035", "6857"]
+    market_suffix = "JP"
+    news_params = {"hl": "ja-JP", "gl": "JP", "ceid": "JP:ja"}
+
+tickers_input = st.sidebar.text_input("銘柄コード（カンマ区切り）", value=",".join(DEFAULT_TICKERS))
+TICKERS = [t.strip() for t in tickers_input.split(",")]
 RISK_DD_REJECT = -40.0
 
-# --- 2. 処理エンジン (前回までのロジックを統合) ---
+# --- 3. 堅牢なデータ取得エンジン ---
 
-def fetch_data(ticker):
-    url = f"https://stooq.com/q/d/l/?s={ticker.lower()}.us&i=d"
-    r = requests.get(url, timeout=15)
-    df = pd.read_csv(StringIO(r.content.decode("utf-8")))
-    df["Date"] = pd.to_datetime(df["Date"])
-    return df.set_index("Date").sort_index()
+def fetch_news_headlines(ticker, params):
+    """市場に合わせた言語・地域設定でニュースを取得"""
+    query = f"{ticker} stock" if market == "米国株 (US)" else f"{ticker} 株価"
+    url = f"https://news.google.com/rss/search?q={query}&hl={params['hl']}&gl={params['gl']}&ceid={params['ceid']}"
+    
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        root = ET.fromstring(r.text)
+        headlines = [item.find('title').text for item in root.findall('.//item')[:5]]
+        return headlines if headlines else ["関連ニュースは見つかりませんでした"]
+    except Exception:
+        return ["ニュースの取得に失敗しました"]
+
+def fetch_stock_data_with_fallback(ticker, suffix):
+    """サフィックスのフォールバックを試行する堅牢なデータ取得"""
+    # 日本株の場合は .JP と .JPN の両方を試す（Stooqの気まぐれ対策）
+    suffixes = [suffix] if suffix == "US" else ["JP", "JPN"]
+    
+    for s in suffixes:
+        url = f"https://stooq.com/q/d/l/?s={ticker.lower()}.{s.lower()}&i=d"
+        try:
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            df = pd.read_csv(StringIO(r.content.decode("utf-8")))
+            if "Close" in df.columns and len(df) > 0:
+                df["Date"] = pd.to_datetime(df["Date"])
+                return df.set_index("Date").sort_index()
+        except:
+            continue
+    raise ValueError(f"銘柄 {ticker} のデータを取得できませんでした。")
 
 def calc_metrics(df):
     c = df["Close"].astype(float)
     rows = len(c)
     r252 = ((c.iloc[-1] / c.iloc[-252]) - 1) * 100 if rows >= 252 else None
     r21  = ((c.iloc[-1] / c.iloc[-21]) - 1) * 100 if rows >= 21 else None
+    
+    # 改良された 12-1ヶ月モメンタム
     mom_12_1 = (r252 - r21) if (r252 is not None and r21 is not None) else None
     vol_60d = c.pct_change().rolling(60).std().iloc[-1] * (252 ** 0.5) * 100 if rows >= 62 else None
     ma_200 = c.rolling(200).mean().iloc[-1]
-    ma_200_gap = ((c.iloc[-1] / ma_200) - 1) * 100 if rows >= 200 else None
+    ma_200_gap = ((c.iloc[-1] / ma_200) - 1) * 100 if (rows >= 200 and ma_200 != 0) else None
     window = min(252, rows)
     sub = c.iloc[-window:]
     max_dd = ((sub / sub.cummax() - 1) * 100).min()
@@ -49,72 +100,87 @@ def calc_metrics(df):
         "ret_1m": round(r21, 2) if r21 is not None else None,
     }
 
-# --- 3. グラフ作成機能 (Plotly) ---
+# --- 4. 委員会合議プロンプト（構造化） ---
 
-def create_chart(df, ticker):
-    fig = go.Figure()
-    # 株価チャート
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='株価', line=dict(color='#1f77b4')))
-    # 200日移動平均
-    ma200 = df['Close'].rolling(200).mean()
-    fig.add_trace(go.Scatter(x=df.index, y=ma200, name='200日移動平均', line=dict(color='orange', dash='dash')))
+def run_structured_committee(analyzed_data):
+    data_json = json.dumps(analyzed_data, ensure_ascii=False)
+    prompt = f"""
+    あなたは投資委員会の議長です。以下のデータを「唯一の事実」として、Top3銘柄を選定してください。
+
+    【制約事項】
+    - 提供された「news」以外の外部ニュースを推測で書かないでください。
+    - ニュース見出しから業界事情を深読みしすぎず、見出しの事実に限定してください。
+    - 各銘柄に [Pos/Neu/Neg] のセンチメントラベルを付与してください。
+    - 不明な点は「データ不足により不明」と明記してください。
+
+    【データ】
+    {data_json}
+
+    【出力形式】
+    1. 各銘柄の個別分析（数値引用、ニュースのセンチメントとその根拠）
+    2. 最終Top3ランキング
+    3. 全体を通したリスク管理上の注意点
+    """
+    response = client.models.generate_content(model='gemini-flash-latest', contents=prompt)
+    return response.text
+
+# --- 5. メイン画面の挙動 ---
+
+if st.sidebar.button("🚀 グローバル精査を開始"):
+    final_list = []
+    all_dfs = {}
     
-    fig.update_layout(
-        title=f"{ticker} 株価推移 (200MA付き)",
-        height=400,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    return fig
+    with st.status("世界市場のデータを統合中...", expanded=True) as status:
+        for ticker in TICKERS:
+            try:
+                st.write(f"⏳ {ticker}.{market_suffix} の多角分析中...")
+                df = fetch_stock_data_with_fallback(ticker, market_suffix)
+                m = calc_metrics(df)
+                m["ticker"] = ticker
+                m["news"] = fetch_news_headlines(ticker, news_params)
+                
+                if m["max_dd_252d"] is not None and m["max_dd_252d"] < RISK_DD_REJECT:
+                    st.write(f"🚫 {ticker}: リスク（DD {m['max_dd_252d']}%）が許容範囲外のため除外")
+                    continue
+                
+                final_list.append(m)
+                all_dfs[ticker] = df
+                time.sleep(0.5)
+            except Exception as e:
+                st.error(f"❌ {ticker} の分析をスキップ: {e}")
+        status.update(label="精査完了", state="complete", expanded=False)
 
-# --- 4. メイン画面の挙動 ---
-
-if not api_key:
-    st.warning("サイドバーに Gemini API キーを入力してください。")
-else:
-    client = genai.Client(api_key=api_key)
-    if st.sidebar.button("🚀 分析を開始"):
-        final_list = []
-        all_dfs = {}
+    if len(final_list) >= 1:
+        report = run_structured_committee(final_list)
         
-        with st.status("データを取得・分析中...", expanded=True) as status:
-            for ticker in TICKERS:
-                try:
-                    st.write(f"🔍 {ticker} を精査中...")
-                    df = fetch_data(ticker)
-                    m = calc_metrics(df)
-                    m["ticker"] = ticker
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.header("🏆 投資委員会・最終評議")
+            st.markdown(report)
+        
+        with col2:
+            st.header("📈 データ・エビデンス")
+            for m in final_list:
+                with st.expander(f"📊 {m['ticker']} ({market_suffix})", expanded=True):
+                    # 簡易チャート
+                    fig = go.Figure()
+                    df_plot = all_dfs[m['ticker']]
+                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'], name='Price'))
+                    ma200 = df_plot['Close'].rolling(200).mean()
+                    fig.add_trace(go.Scatter(x=df_plot.index, y=ma200, name='200MA', line=dict(dash='dash')))
+                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0))
+                    st.plotly_chart(fig, use_container_width=True)
                     
-                    if m["max_dd_252d"] < RISK_DD_REJECT:
-                        st.write(f"⚠️ {ticker} はリスク過多のため除外")
-                        continue
+                    st.write("**最新ヘッドライン:**")
+                    for h in m["news"]:
+                        st.write(f"🔹 {h}")
                     
-                    final_list.append(m)
-                    all_dfs[ticker] = df
-                    time.sleep(0.5)
-                except Exception as e:
-                    st.error(f"{ticker} でエラー: {e}")
-            status.update(label="分析完了！", state="complete", expanded=False)
-
-        if len(final_list) >= 3:
-            # AIレポートの作成
-            prompt = f"以下の投資データを元に、Top3銘柄の選定レポートを作成してください。各エージェント（Quality, Value, Momentum, Heat, Risk）の視点を含めてください。データ：{json.dumps(final_list)}"
-            response = client.models.generate_content(model='gemini-flash-latest', contents=prompt)
-            
-            # 画面表示 (左右に分割)
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.header("🏆 投資委員会レポート")
-                st.markdown(response.text)
-            
-            with col2:
-                st.header("📈 テクニカルチャート")
-                # Top3に選ばれた銘柄だけでなく、分析した銘柄を表示
-                for m in final_list[:3]: # とりあえず上位3つを表示
-                    st.subheader(f"{m['ticker']} (12-1Mom: {m['mom_12_1']}%)")
-                    st.plotly_chart(create_chart(all_dfs[m['ticker']], m['ticker']), use_container_width=True)
-                    st.write(f"**ボラティリティ:** {m['vol_60d']}% | **最大下落率:** {m['max_dd_252d']}%")
-                    st.divider()
-        else:
-            st.error("分析可能な銘柄が足りませんでした。")
+                    # ログ保存用データの表示
+                    st.json(m)
+        
+        # 実行ログの保存
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with open(f"log_{run_id}.json", "w", encoding="utf-8") as f:
+            json.dump({"report": report, "data": final_list}, f, ensure_ascii=False, indent=2)
+    else:
+        st.error("分析対象銘柄が足りません。")
