@@ -1,6 +1,6 @@
 import os
-import math
 import time
+import math
 import urllib.parse
 import urllib.request
 import traceback
@@ -15,23 +15,35 @@ import streamlit as st
 import yfinance as yf
 
 # ==========================================
-# 0. SYSTEM CONFIG
+# 0. SYSTEM CONFIG & ERROR LOGGING
 # ==========================================
-st.set_page_config(page_title="AlphaLens Architect", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AlphaLens Architect", layout="wide", initial_sidebar_state="expanded")
 
-# GLOBAL ERROR HANDLER
-def error_boundary(func):
+# Initialize Session State for Logs
+if "system_logs" not in st.session_state:
+    st.session_state.system_logs = []
+
+def log_error(e: Exception, context: str = ""):
+    """Capture error to sidebar log without stopping app if possible"""
+    err_msg = f"{datetime.now().strftime('%H:%M:%S')} [{context}] {str(e)}"
+    st.session_state.system_logs.append(err_msg)
+    # Print traceback to console for cloud logs
+    print(err_msg)
+    traceback.print_exc()
+
+# Global Error Boundary Wrapper
+def safe_run(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            st.error(f"⚠️ CRITICAL SYSTEM FAILURE: {str(e)}")
-            st.code(traceback.format_exc(), language="python")
-            st.stop()
+            log_error(e, func.__name__)
+            st.error(f"⚠️ CRITICAL FAILURE IN {func.__name__}: {str(e)}")
+            return None
     return wrapper
 
 # ==========================================
-# 1. UI DESIGN (PHANTOM DARK + SELECTBOX FIX)
+# 1. UI DESIGN (PHANTOM DARK)
 # ==========================================
 st.markdown("""
 <style>
@@ -67,16 +79,8 @@ h1, h2, h3, .brand {
 div[data-testid="stDataFrame"] { background-color: var(--bg) !important; border: 1px solid var(--border) !important; }
 [data-testid="stHeader"] { background-color: var(--panel) !important; border-bottom: 1px solid var(--accent) !important; }
 
-/* SELECTBOX FIX */
-div[data-baseweb="select"] > div {
-    background-color: #111 !important;
-    border-color: #333 !important;
-    color: #fff !important;
-}
-div[data-baseweb="popover"], div[data-baseweb="menu"] {
-    background-color: #111 !important;
-    border: 1px solid #333 !important;
-}
+/* INPUTS */
+div[data-baseweb="select"] > div, div[data-baseweb="popover"] { background-color: #111 !important; border-color: #333 !important; color: #fff !important; }
 li[data-baseweb="option"] { color: #fff !important; }
 .stSelectbox label { color: #888 !important; }
 
@@ -96,10 +100,12 @@ button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(
 .kpi-val { font-size: 20px; color: var(--accent); font-weight: 700; }
 .kpi-lbl { font-size: 10px; color: #888; }
 .status-ok { border-color: #238636 !important; }
-.status-ng { border-color: #da3633 !important; }
 
 /* AI BOX */
 .ai-box { border: 1px dashed var(--accent); background: rgba(0,242,254,0.05); padding: 20px; margin-top: 15px; line-height: 1.8; font-size: 12px; }
+
+/* LOGS */
+.log-box { font-family: monospace; font-size: 10px; color: #da3633; background: #1a0505; padding: 5px; border-left: 3px solid #da3633; margin-bottom: 5px; }
 
 /* UTILS */
 .muted { color: #888 !important; font-size: 10px !important; }
@@ -112,19 +118,19 @@ button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(
 API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 APP_PASS = st.secrets.get("APP_PASSWORD")
 
+HAS_LIB = False
 try:
     import google.generativeai as genai
     HAS_LIB = True
     if API_KEY: genai.configure(api_key=API_KEY)
-except ImportError:
-    HAS_LIB = False
+except Exception as e:
+    log_error(e, "GenAI Import")
 
 def check_access():
     if not APP_PASS: return True
     if st.session_state.get("auth", False): return True
-    
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
         st.markdown("<br><br><h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
         with st.form("auth"):
             p = st.text_input("PASSCODE", type="password")
@@ -184,7 +190,6 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# FULL NAME DB
 NAME_DB = {
     "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"通信","1631.T":"電機","1621.T":"自動車","1632.T":"医薬","1623.T":"銀行","1624.T":"金融","1622.T":"商社","1630.T":"機械","1617.T":"エネ","1618.T":"建設","1619.T":"素材","1633.T":"食品","1628.T":"電力","1625.T":"不動産","1629.T":"鉄鋼","1627.T":"サービス","1620.T":"産機",
@@ -209,7 +214,7 @@ NAME_DB = {
 # 4. CORE ENGINES
 # ==========================================
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_data(tickers: Tuple[str, ...]) -> pd.DataFrame:
+def fetch_bulk_cached(tickers: Tuple[str, ...], period: str) -> pd.DataFrame:
     tickers = tuple(dict.fromkeys([t for t in tickers if t]))
     frames = []
     chunk = 80
@@ -218,7 +223,9 @@ def fetch_data(tickers: Tuple[str, ...]) -> pd.DataFrame:
         try:
             r = yf.download(" ".join(c), period=FETCH_PERIOD, interval="1d", group_by="ticker", auto_adjust=True, threads=True, progress=False)
             if not r.empty: frames.append(r)
-        except: continue
+        except Exception as e:
+            log_error(e, f"Fetch Chunk {i}")
+            continue
     return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
 def extract_close(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
@@ -232,7 +239,9 @@ def extract_close(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
         keep = [c for c in expected if c in close.columns]
         return close[keep]
-    except: return pd.DataFrame()
+    except Exception as e:
+        log_error(e, "Extract Close")
+        return pd.DataFrame()
 
 def calc_multi_horizon(s: pd.Series) -> Dict[str, float]:
     res = {}
@@ -287,73 +296,59 @@ def fetch_news(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
     try:
         raw = yf.Ticker(ticker).news
         if raw: y = [{"title": n.get("title",""), "link": n.get("link","")} for n in raw[:4]]
-    except: pass
+    except Exception as e: log_error(e, f"Yahoo News {ticker}")
     try:
         q = urllib.parse.quote(f"{name} 株")
         with urllib.request.urlopen(f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja", timeout=4) as r:
             root = ET.fromstring(r.read())
             g = [{"title": i.findtext("title"), "link": i.findtext("link")} for i in root.findall(".//item")[:4]]
-    except: pass
+    except Exception as e: log_error(e, f"Google News {ticker}")
     return y, g
 
-def check_ai_status():
-    if not HAS_LIB: return "MISSING_LIB"
-    if not API_KEY: return "MISSING_KEY"
-    return "ONLINE"
-
 def call_ai(ticker: str, name: str, stats: Dict) -> str:
-    # UPDATED: Use available model in the provided list
-    # The user has access to gemini-2.0-flash, gemini-2.0-flash-lite, gemini-exp-1206
-    models_to_try = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-exp-1206"]
-    
+    # Use verified model name: gemini-2.0-flash
     if HAS_LIB and API_KEY:
-        for m_name in models_to_try:
-            try:
-                model = genai.GenerativeModel(m_name)
-                prompt = f"""
-                プロ投資家として議論し、結論を出せ。
-                銘柄: {name} ({ticker})
-                指標: RS {stats['RS']:.2f}%, Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
-                騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%
-                
-                形式:
-                【モメンタム】...
-                【リスク】...
-                【結論】(強気/中立/弱気) 理由1行
-                """
-                resp = model.generate_content(prompt)
-                if resp.text: return resp.text
-            except Exception:
-                continue
-                
-    # 2. Rule-based Fallback
-    v = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
-    r = "LIB MISSING" if not HAS_LIB else "KEY MISSING / API ERROR"
-    return f"AI UNAVAILABLE ({r}). RULE-BASED:\nTREND: {v}\nRS: {stats['RS']:.2f}%"
+        try:
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            prompt = f"""
+            プロの投資家として、以下の日本/米国株を分析し、投資判断（モメンタム、リスク、マクロ視点）を議論形式で出力せよ。
+            結論は日本語で断定的に。
+            
+            銘柄: {name} ({ticker})
+            指標: RS {stats['RS']:.2f}% (市場比), Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
+            騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%
+            
+            形式:
+            【モメンタム】...
+            【リスク】...
+            【結論】(強気/中立/弱気) 理由1行
+            """
+            return model.generate_content(prompt).text
+        except Exception as e:
+            log_error(e, "Gemini Call")
+            return f"⚠️ AI ERROR: {str(e)}"
+    
+    return "AI OFFLINE (CHECK LOGS)"
 
 # ==========================================
 # 5. MAIN UI
 # ==========================================
-@error_boundary
+@safe_run
 def main():
     st.markdown("<h2 class='brand'>ALPHALENS ARCHITECT</h2>", unsafe_allow_html=True)
     
-    # AI Diagnosis (Sidebar)
+    # Sidebar Logs
     with st.sidebar:
-        st.markdown("### SYSTEM DIAGNOSTIC")
-        status = check_ai_status()
-        color = "#238636" if status == "ONLINE" else "#da3633"
-        st.markdown(f"**AI STATUS**: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
+        st.markdown("### 🛑 SYSTEM LOGS")
+        if st.session_state.system_logs:
+            for l in st.session_state.system_logs[-5:]:
+                st.markdown(f"<div class='log-box'>{l}</div>", unsafe_allow_html=True)
+        else:
+            st.caption("No active errors.")
         
-        if st.button("PRINT MODELS", use_container_width=True):
-            if HAS_LIB and API_KEY:
-                try:
-                    models = [m.name for m in genai.list_models()]
-                    st.json(models)
-                except Exception as e:
-                    st.error(str(e))
-            else:
-                st.error("Cannot list models (Key/Lib missing)")
+        if st.button("CLEAR LOGS", use_container_width=True):
+            st.session_state.system_logs = []
+            st.rerun()
 
     with st.container():
         st.markdown("<div class='deck'>", unsafe_allow_html=True)
@@ -374,7 +369,7 @@ def main():
     core_tickers = [bench] + list(m_cfg["sectors"].values())
     if sync or "core_df" not in st.session_state or st.session_state.get("last_m") != market_key:
         with st.spinner("SYNCING MARKET DATA..."):
-            raw = fetch_bulk(tuple(core_tickers))
+            raw = fetch_bulk_cached(tuple(core_tickers), FETCH_PERIOD)
             st.session_state.core_df = extract_close(raw, core_tickers)
             st.session_state.last_m = market_key
     
@@ -383,7 +378,7 @@ def main():
     
     if bench not in audit_res["list"]:
         st.error("BENCHMARK UNAVAILABLE")
-        st.stop()
+        return
 
     col1, col2 = st.columns(2)
     with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>HEALTH</div><div class='kpi-val'>{audit_res['count']}/{audit_res['total']}</div></div>", unsafe_allow_html=True)
@@ -400,6 +395,10 @@ def main():
                 res["Sector"] = s_n
                 sec_rows.append(res)
     
+    if not sec_rows:
+        st.warning("No sector data available.")
+        return
+
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
     sdf_chart = pd.concat([sdf, pd.DataFrame([{"Sector":"MARKET", "RS":0}])], ignore_index=True).sort_values("RS")
     
@@ -428,7 +427,7 @@ def main():
     cache_key = f"{market_key}_{target_sector}"
     if cache_key != st.session_state.get("sec_cache_key") or sync:
         with st.spinner("SCANNING SECTOR ASSETS..."):
-            raw_s = fetch_bulk(tuple(full_list))
+            raw_s = fetch_bulk_cached(tuple(full_list), FETCH_PERIOD)
             st.session_state.sec_df = extract_close(raw_s, full_list)
             st.session_state.sec_cache_key = cache_key
             
@@ -446,7 +445,7 @@ def main():
             
     if not results:
         st.warning("NO DATA FOUND.")
-        st.stop()
+        return
         
     df = pd.DataFrame(results)
     df["RS_z"] = zscore(df["RS"])
