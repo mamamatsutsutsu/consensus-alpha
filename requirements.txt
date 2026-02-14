@@ -2,3 +2,4 @@ google-genai
 requests
 pandas
 plotly
+yfinance
