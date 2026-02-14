@@ -1,6 +1,6 @@
 import os
-import math
 import time
+import math
 import urllib.parse
 import urllib.request
 import traceback
@@ -15,23 +15,22 @@ import streamlit as st
 import yfinance as yf
 
 # ==========================================
-# 0. SYSTEM CONFIG & ERROR HANDLING WRAPPER
+# 0. SYSTEM & ERROR HANDLER
 # ==========================================
-st.set_page_config(page_title="AlphaLens Architect", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AlphaLens Sovereign", layout="wide", initial_sidebar_state="collapsed")
 
-# GLOBAL ERROR HANDLER
 def error_boundary(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            st.error("⚠️ SYSTEM CRITICAL ERROR")
-            st.code(traceback.format_exc(), language="python")
+            st.error(f"⚠️ SYSTEM ERROR: {str(e)}")
+            st.code(traceback.format_exc())
             st.stop()
     return wrapper
 
 # ==========================================
-# 1. UI DESIGN (PHANTOM DARK + SELECTBOX FIX)
+# 1. PHANTOM UI (REFINED TABLE & FONTS)
 # ==========================================
 st.markdown("""
 <style>
@@ -40,8 +39,8 @@ st.markdown("""
 :root {
   --bg: #000000;
   --panel: #0a0a0a;
-  --card: #111111;
-  --border: #333333;
+  --card: #121212;
+  --border: #333;
   --accent: #00f2fe;
   --text: #e0e0e0;
 }
@@ -56,53 +55,61 @@ h1, h2, h3, .brand {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   font-weight: 900 !important;
-  text-shadow: 0 0 20px rgba(0, 242, 254, 0.5);
+  text-shadow: 0 0 25px rgba(0, 242, 254, 0.4);
 }
 
 /* CONTAINERS */
 .deck { background: var(--panel); border: 1px solid var(--accent); padding: 20px; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0, 242, 254, 0.1); }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 15px; margin-bottom: 10px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 15px; margin-bottom: 10px; }
 
-/* TABLE FIX */
-div[data-testid="stDataFrame"] { background-color: var(--bg) !important; border: 1px solid var(--border) !important; }
-[data-testid="stHeader"] { background-color: var(--panel) !important; border-bottom: 1px solid var(--accent) !important; }
+/* TABLE REFINEMENT (CYBERPUNK STYLE) */
+div[data-testid="stDataFrame"] {
+    background-color: #050505 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 0px !important;
+}
+div[data-testid="stDataFrame"] div[data-testid="stVerticalBlock"] {
+    background-color: #050505 !important;
+}
+[data-testid="stHeader"] {
+    background-color: #000 !important;
+    border-bottom: 2px solid var(--accent) !important;
+}
+[data-testid="stHeader"] * {
+    color: var(--accent) !important;
+    font-weight: 900 !important;
+}
 
-/* INPUTS & SELECTBOX FIX (CRITICAL) */
-div[data-baseweb="select"] > div {
-    background-color: #111 !important;
-    border-color: #333 !important;
-    color: #fff !important;
-}
-div[data-baseweb="popover"], div[data-baseweb="menu"] {
-    background-color: #111 !important;
-    border: 1px solid #333 !important;
-}
-li[data-baseweb="option"] {
-    color: #fff !important;
-}
-li[data-baseweb="option"]:hover, li[aria-selected="true"] {
-    background-color: #222 !important;
-    color: #00f2fe !important;
-}
-.stSelectbox label { color: #888 !important; }
-
-/* BUTTONS */
+/* BUTTONS (HIGH CONTRAST) */
 button {
   background-color: #000 !important;
   color: var(--accent) !important;
-  border: 1px solid #333 !important;
+  border: 1px solid #444 !important;
   border-radius: 4px !important;
   font-weight: 800 !important;
   text-transform: uppercase;
+  transition: all 0.3s;
 }
-button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(--accent) !important; }
+button:hover {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 15px var(--accent) !important;
+  color: #fff !important;
+}
 
 /* METRICS */
-.kpi { border-left: 4px solid var(--border); background: var(--panel); padding: 10px; }
+.kpi { border-left: 3px solid var(--border); background: var(--panel); padding: 10px; }
 .kpi-val { font-size: 20px; color: var(--accent); font-weight: 700; }
 .kpi-lbl { font-size: 10px; color: #888; }
 .status-ok { border-color: #238636 !important; }
-.status-ng { border-color: #da3633 !important; }
+
+/* AI BOX */
+.ai-box {
+    border: 1px dashed var(--accent);
+    background: rgba(0,242,254,0.03);
+    padding: 20px;
+    margin-top: 15px;
+    border-radius: 8px;
+}
 
 /* UTILS */
 .muted { color: #888 !important; font-size: 10px !important; }
@@ -110,12 +117,12 @@ button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. AUTH & SETUP
+# 2. AUTH & AI SETUP
 # ==========================================
 API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 APP_PASS = st.secrets.get("APP_PASSWORD")
 
-# AI Setup
+# Library Check
 try:
     import google.generativeai as genai
     HAS_LIB = True
@@ -126,9 +133,8 @@ except ImportError:
 def check_access():
     if not APP_PASS: return True
     if st.session_state.get("auth", False): return True
-    
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
         st.markdown("<br><br><h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
         with st.form("auth"):
             p = st.text_input("PASSCODE", type="password")
@@ -142,14 +148,13 @@ def check_access():
 if not check_access(): st.stop()
 
 # ==========================================
-# 3. UNIVERSE DEFINITIONS (FULL)
+# 3. UNIVERSE & NAME DB (COMPLETE)
 # ==========================================
 LOOKBACKS = {"1W": 5, "1M": 21, "3M": 63, "12M": 252}
 FETCH_PERIOD = "24mo"
 
+# --- US SECTORS ---
 US_SEC = {"Tech":"XLK", "Health":"XLV", "Fin":"XLF", "Comm":"XLC", "Disc":"XLY", "Staples":"XLP", "Ind":"XLI", "Energy":"XLE", "Mat":"XLB", "Util":"XLU", "RE":"XLRE"}
-JP_SEC = {"通信":"1626.T", "電機":"1631.T", "自動車":"1621.T", "医薬":"1632.T", "銀行":"1623.T", "金融":"1624.T", "商社":"1622.T", "機械":"1630.T", "エネ":"1617.T", "建設":"1618.T", "素材":"1619.T", "食品":"1633.T", "電力":"1628.T", "不動産":"1625.T", "鉄鋼":"1629.T", "サービス":"1627.T", "産機":"1620.T"}
-
 US_STOCKS = {
     "Tech": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
     "Comm": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
@@ -163,6 +168,9 @@ US_STOCKS = {
     "Util": ["NEE","DUK","SO","AEP","SRE","EXC","XEL","D","PEG","ED","EIX","WEC","AWK","ES","PPL","ETR"],
     "RE": ["PLD","AMT","CCI","EQIX","SPG","PSA","O","WELL","DLR","AVB","EQR","VICI","CSGP","SBAC","IRM"],
 }
+
+# --- JP SECTORS ---
+JP_SEC = {"通信":"1626.T", "電機":"1631.T", "自動車":"1621.T", "医薬":"1632.T", "銀行":"1623.T", "金融":"1624.T", "商社":"1622.T", "機械":"1630.T", "エネ":"1617.T", "建設":"1618.T", "素材":"1619.T", "食品":"1633.T", "電力":"1628.T", "不動産":"1625.T", "鉄鋼":"1629.T", "サービス":"1627.T", "産機":"1620.T"}
 JP_STOCKS = {
     "通信": ["9432.T","9433.T","9434.T","9984.T","4689.T","4755.T","9613.T","9602.T","4385.T","6098.T","3659.T","3765.T"],
     "電機": ["8035.T","6857.T","6146.T","6920.T","6758.T","6501.T","6723.T","6981.T","6954.T","7741.T","6702.T","6503.T","6752.T","7735.T","6861.T"],
@@ -188,13 +196,17 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
+# --- COMPLETE NAME DB ---
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"Cons","XLP":"Staples","XLI":"Ind","XLE":"Energy","XLB":"Mat","XLU":"Util","XLRE":"RE",
+    # ETF
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"通信","1631.T":"電機","1621.T":"自動車","1632.T":"医薬","1623.T":"銀行","1624.T":"金融","1622.T":"商社","1630.T":"機械","1617.T":"エネ","1618.T":"建設","1619.T":"素材","1633.T":"食品","1628.T":"電力","1625.T":"不動産","1629.T":"鉄鋼","1627.T":"サービス","1620.T":"産機",
+    # US
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
     "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
     "LIN":"Linde","NEE":"NextEra","DUK":"Duke","SO":"Southern","AMT":"Amer Tower","PLD":"Prologis","INTC":"Intel","CSCO":"Cisco","IBM":"IBM","UBER":"Uber","ABNB":"Airbnb","PYPL":"PayPal",
+    # JP (FULL)
     "8035.T":"東京エレク","6857.T":"アドバンテ","6146.T":"ディスコ","6920.T":"レーザーテク","6723.T":"ルネサス","6758.T":"ソニーG","6501.T":"日立","6981.T":"村田製","6954.T":"ファナック","7741.T":"HOYA","6702.T":"富士通","6503.T":"三菱電機","6752.T":"パナHD","7735.T":"SCREEN","6861.T":"キーエンス","6971.T":"京セラ","6645.T":"オムロン",
     "9432.T":"NTT","9433.T":"KDDI","9434.T":"ソフトバンク","9984.T":"SBG","4689.T":"LINEヤフー","6098.T":"リクルート","4755.T":"楽天G","9613.T":"NTTデータ","2413.T":"エムスリー","4385.T":"メルカリ",
     "7203.T":"トヨタ","7267.T":"ホンダ","6902.T":"デンソー","7201.T":"日産","7269.T":"スズキ","7270.T":"SUBARU","7272.T":"ヤマハ発","9101.T":"日本郵船","9104.T":"商船三井","9020.T":"JR東日本","9022.T":"JR東海","9005.T":"東急",
@@ -204,14 +216,16 @@ NAME_DB = {
     "4063.T":"信越化学","4452.T":"花王","4901.T":"富士フイルム","4911.T":"資生堂","3407.T":"旭化成","5401.T":"日本製鉄","5411.T":"JFE","6301.T":"コマツ","7011.T":"三菱重工","6367.T":"ダイキン","6273.T":"SMC",
     "1605.T":"INPEX","5020.T":"ENEOS","9501.T":"東電EP","9503.T":"関電","9531.T":"東ガス","4502.T":"武田","4568.T":"第一三共","4519.T":"中外","4503.T":"アステラス","4507.T":"塩野義","4523.T":"エーザイ",
     "8801.T":"三井不","8802.T":"三菱地所","8830.T":"住友不","4661.T":"OLC","9735.T":"セコム","4324.T":"電通","2127.T":"日本M&A","6028.T":"テクノプロ","2412.T":"ベネフィット","4689.T":"LINEヤフー",
-    "6146.T":"ディスコ","6460.T":"セガサミー","6471.T":"日本精工","6268.T":"ナブテスコ","2801.T":"キッコーマン","2802.T":"味の素"
+    "6146.T":"ディスコ","6460.T":"セガサミー","6471.T":"日本精工","6268.T":"ナブテスコ","2801.T":"キッコーマン","2802.T":"味の素",
+    # ADDITIONAL MISSING
+    "5711.T":"三菱マテ","5713.T":"住友鉱","5802.T":"住友電工","5406.T":"神戸鋼","3402.T":"東レ","4021.T":"日産化","4188.T":"三菱ケミ","4631.T":"DIC","3765.T":"ガンホー","3659.T":"ネクソン","2002.T":"日清製粉"
 }
 
 # ==========================================
-# 4. CORE ENGINES
+# 4. ENGINES & LOGIC
 # ==========================================
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_data(tickers: Tuple[str, ...]) -> pd.DataFrame:
+def fetch_bulk(tickers: Tuple[str, ...]) -> pd.DataFrame:
     tickers = tuple(dict.fromkeys([t for t in tickers if t]))
     frames = []
     chunk = 80
@@ -244,7 +258,7 @@ def calc_multi_horizon(s: pd.Series) -> Dict[str, float]:
         else: res[label] = np.nan
     return res
 
-def calc_stats(s: pd.Series, b: pd.Series, win: int) -> Dict:
+def calc_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     if len(s) < win+1 or len(b) < win+1: return None
     s_win, b_win = s.tail(win+1), b.tail(win+1)
     if s_win.isna().any() or b_win.isna().any(): return None
@@ -304,14 +318,16 @@ def check_ai_status():
     return "ONLINE"
 
 def call_ai(ticker: str, name: str, stats: Dict) -> str:
+    # 1. Gemini 1.5 Flash (Updated)
     if HAS_LIB and API_KEY:
         try:
-            model = genai.GenerativeModel("gemini-pro")
+            model = genai.GenerativeModel("gemini-1.5-flash")
             prompt = f"""
-            プロ投資家として議論し、結論を出せ。
+            プロの投資家として議論し、結論を出せ。
             銘柄: {name} ({ticker})
             指標: RS {stats['RS']:.2f}%, Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
             騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%
+            
             形式:
             【モメンタム】...
             【リスク】...
@@ -320,25 +336,22 @@ def call_ai(ticker: str, name: str, stats: Dict) -> str:
             return model.generate_content(prompt).text
         except Exception as e: return f"AI Error: {str(e)}"
     
+    # 2. Rule-based Fallback
     v = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
     r = "LIB MISSING" if not HAS_LIB else "KEY MISSING"
     return f"AI UNAVAILABLE ({r}). RULE-BASED:\nTREND: {v}\nRS: {stats['RS']:.2f}%"
 
 # ==========================================
-# 5. MAIN UI (ERROR PROTECTED)
+# 5. MAIN UI (PROTECTED)
 # ==========================================
 @error_boundary
 def main():
     st.markdown("<h2 class='brand'>ALPHALENS ARCHITECT</h2>", unsafe_allow_html=True)
     
-    # AI Status Diagnostic
+    # AI Status
     status = check_ai_status()
-    st.sidebar.markdown("### AI DIAGNOSTIC")
-    if status == "ONLINE":
-        st.sidebar.success(f"STATUS: {status}")
-    else:
-        st.sidebar.error(f"STATUS: {status}")
-        st.sidebar.caption("Check secrets.toml or requirements.txt")
+    color = "#238636" if status == "ONLINE" else "#da3633"
+    st.sidebar.markdown(f"**AI STATUS**: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
 
     with st.container():
         st.markdown("<div class='deck'>", unsafe_allow_html=True)
@@ -355,11 +368,11 @@ def main():
     win = LOOKBACKS[lookback_key]
     bench = m_cfg["bench"]
     
-    # 1. SYNC
+    # SYNC
     core_tickers = [bench] + list(m_cfg["sectors"].values())
     if sync or "core_df" not in st.session_state or st.session_state.get("last_m") != market_key:
         with st.spinner("SYNCING MARKET DATA..."):
-            raw = fetch_data(tuple(core_tickers))
+            raw = fetch_bulk(tuple(core_tickers))
             st.session_state.core_df = extract_close(raw, core_tickers)
             st.session_state.last_m = market_key
     
@@ -374,13 +387,13 @@ def main():
     with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>HEALTH</div><div class='kpi-val'>{audit_res['count']}/{audit_res['total']}</div></div>", unsafe_allow_html=True)
     with col2: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>DATE</div><div class='kpi-val'>{str(audit_res['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
 
-    # 2. SECTOR OVERVIEW
-    b_stats = calc_stats(core_df[bench], core_df[bench], win)
+    # SECTOR OVERVIEW
+    b_stats = calc_metrics(core_df[bench], core_df[bench], win)
     
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
         if s_t in audit_res["list"]:
-            res = calc_stats(core_df[s_t], core_df[bench], win)
+            res = calc_metrics(core_df[s_t], core_df[bench], win)
             if res:
                 res["Sector"] = s_n
                 sec_rows.append(res)
@@ -395,7 +408,6 @@ def main():
     
     click_sec = event["selection"]["points"][0]["y"] if event and event.get("selection", {}).get("points") else None
     
-    # 3. DRILL DOWN
     cols = st.columns(6)
     btn_sec = None
     for i, s in enumerate(m_cfg["sectors"].keys()):
@@ -404,6 +416,7 @@ def main():
     target_sector = btn_sec or click_sec or st.session_state.get("target_sector", list(m_cfg["sectors"].keys())[0])
     st.session_state.target_sector = target_sector
     
+    # FORENSIC
     st.markdown("---")
     st.subheader(f"FORENSIC: {target_sector}")
     
@@ -413,7 +426,7 @@ def main():
     cache_key = f"{market_key}_{target_sector}"
     if cache_key != st.session_state.get("sec_cache_key") or sync:
         with st.spinner("SCANNING SECTOR ASSETS..."):
-            raw_s = fetch_data(tuple(full_list))
+            raw_s = fetch_bulk(tuple(full_list))
             st.session_state.sec_df = extract_close(raw_s, full_list)
             st.session_state.sec_cache_key = cache_key
             
@@ -422,7 +435,7 @@ def main():
     
     results = []
     for t in [x for x in s_audit["list"] if x != bench]:
-        stats = calc_stats(sec_df[t], sec_df[bench], win)
+        stats = calc_metrics(sec_df[t], sec_df[bench], win)
         if stats:
             stats.update(calc_multi_horizon(sec_df[t]))
             stats["Ticker"] = t
@@ -441,7 +454,6 @@ def main():
     df = df.sort_values("Apex", ascending=False).reset_index(drop=True)
     df["Verdict"] = df.apply(lambda r: "STRONG" if r["RS"]>0 and r["Accel"]>0 and r["Stable"]=="✅" else "WATCH" if r["RS"]>0 else "AVOID", axis=1)
 
-    # 4. TABLE & AI
     c1, c2 = st.columns([1.5, 1])
     with c1:
         st.markdown("##### LEADERBOARD")
