@@ -1,5 +1,6 @@
-google-genai
-requests
+streamlit
 pandas
-plotly
+numpy
 yfinance
+plotly
+google-generativeai
