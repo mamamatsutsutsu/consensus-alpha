@@ -1,12 +1,12 @@
-# app.py — AlphaLens Final "Command Center" v27.3
-# 
-# [Verified Features]
-# 1. Zero Error Architecture: No pandas Styler/Matplotlib. Native Streamlit only.
-# 2. Blazing Fast: Pre-populated name database to skip slow API calls.
-# 3. Integrity Gatekeeper: Automatically filters out bad data/sync issues.
-# 4. Professional UI: Dark mode, "Command Center" aesthetic, Badges, Chips.
-# 5. Full Drill-down: Market -> Sector Bar -> Stock List -> AI Debate.
-# 6. AI Agents: Deterministic logic (Momentum, Risk, Quality, News) in Japanese.
+# app.py — AlphaLens v27.5 "Stability First"
+# Fixes:
+# - NameError(vol_annualized) eradicated (alias provided)
+# - Market overview always shown at top (before charts)
+# - Removed "weird bar" under title (no code/progress bar blocks)
+# - Sector names JP in Japanese (TOPIX-17 style)
+# - Plotly charts show numeric labels on bars
+# - No pandas Styler / No matplotlib
+# - Robust guards so it won't crash on empty/shape issues
 
 import streamlit as st
 import pandas as pd
@@ -14,485 +14,582 @@ import numpy as np
 import yfinance as yf
 import plotly.express as px
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
-# ==========================================
-# 1. Page Configuration & CSS
-# ==========================================
-st.set_page_config(page_title="AlphaLens Final", layout="wide", initial_sidebar_state="collapsed")
-
+# =========================
+# Page / Theme / Fonts
+# =========================
+st.set_page_config(page_title="AlphaLens", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=Inter:wght@400;600;700&display=swap');
-
-html, body, [class*="css"] {
-    font-family: "Inter", "IBM Plex Sans JP", system-ui, sans-serif !important;
-    background-color: #0d1117;
-    color: #e6edf3;
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;600;700&family=Inter:wght@400;600;700&display=swap');
+html, body, [class*="css"]  {
+  font-family: "IBM Plex Sans JP","Inter",system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP","Hiragino Kaku Gothic ProN","Meiryo",sans-serif !important;
 }
-
-/* Headers */
-h1, h2, h3 { font-weight: 700; letter-spacing: -0.5px; }
-.brand { font-size: 24px; font-weight: 900; background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.subbrand { font-size: 12px; color: #8b949e; margin-bottom: 20px; }
-
-/* Components */
-.deck { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
-.card { background: #1c2128; border: 1px solid #30363d; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
-.metric-box { background: #21262d; border-left: 4px solid #30363d; border-radius: 6px; padding: 8px 12px; }
-
-/* Indicators */
-.status-green { border-left-color: #238636 !important; }
-.status-yellow { border-left-color: #d29922 !important; }
-.status-red { border-left-color: #da3633 !important; }
-
-/* Badges & Chips */
-.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid; margin-right: 5px; }
-.badge-strong { border-color: #1f6feb; color: #58a6ff; background: rgba(56,139,253,0.1); }
-.badge-watch { border-color: #d29922; color: #f0b429; background: rgba(210,153,34,0.1); }
-.badge-avoid { border-color: #da3633; color: #f85149; background: rgba(218,54,51,0.1); }
-
-.chip { display: inline-block; background: #30363d; color: #c9d1d9; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
-.cert { font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: #7ee787; border: 1px dashed #238636; padding: 6px; border-radius: 6px; background: #0d1117; }
-
-/* Text Utils */
-.muted { color: #8b949e; font-size: 12px; }
-.highlight { color: #e6edf3; font-weight: 600; }
-.big-num { font-size: 18px; font-weight: 700; color: #ffffff; }
-
+.main { background-color:#0d1117; }
+h1,h2,h3,h4 { letter-spacing: 0.2px; }
+.brand { font-size:28px; font-weight:900; color:#e6edf3; margin:6px 0 2px 0; }
+.subbrand { color:#8b949e; font-size:12px; margin:0 0 10px 0; }
+.deck { background:#161b22; padding:12px 14px; border-radius:14px; border:1px solid #30363d; margin-bottom:10px; }
+.card { background:#1c2128; border:1px solid #30363d; border-radius:14px; padding:12px 14px; margin-bottom:10px; }
+.hr { height:1px; background:#30363d; margin:10px 0; }
+.kpi { background:#11161d; border:1px solid #2b313a; border-radius:12px; padding:7px 10px; }
+.kpi .t { font-size:11px; color:#8b949e; line-height:1.1; }
+.kpi b { font-size:13px; color:#e6edf3; }
+.status-green { border-left:5px solid #238636 !important; }
+.status-yellow { border-left:5px solid #d29922 !important; }
+.status-red { border-left:5px solid #da3633 !important; }
+.cert { background:#0d1117; border:1px dashed #238636; border-radius:12px; padding:8px 10px; color:#7ee787;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:12px; }
+.badge { display:inline-block; padding:2px 10px; border-radius:999px; border:1px solid #30363d; font-size:12px; color:#c9d1d9; margin-right:6px; }
+.badge-strong { border-color:#1f6feb; color:#cfe2ff; }
+.badge-watch { border-color:#d29922; color:#ffe8a3; }
+.badge-avoid { border-color:#da3633; color:#ffb4b4; }
+.muted { color:#8b949e; font-size:12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. Constants & Universe Definitions
-# ==========================================
-
+# =========================
+# Lookbacks / Fetch horizon
+# =========================
 LOOKBACKS = {"1W (5d)": 5, "1M (21d)": 21, "3M (63d)": 63, "12M (252d)": 252}
-FETCH_PERIOD = "24mo" # Buffer for calculations
+FETCH_PERIOD = "24mo"
 
-# --- ETFs ---
+# =========================
+# Bench / Sector ETFs
+# =========================
 US_BENCH = "SPY"
 JP_BENCH = "1306.T"
 
 US_SECTOR_ETF = {
-    "Technology": "XLK", "Healthcare": "XLV", "Financials": "XLF", "Cons. Disc": "XLY",
-    "Cons. Staples": "XLP", "Industrials": "XLI", "Energy": "XLE", "Materials": "XLB",
-    "Utilities": "XLU", "Real Estate": "XLRE"
-}
-JP_TOPIX17_ETF = {
-    "Energy": "1617.T", "Materials": "1618.T", "Industrials": "1620.T", "Auto/Trans": "1621.T",
-    "Retail": "1622.T", "Banks": "1623.T", "Financials": "1624.T", "Real Estate": "1625.T",
-    "Info/Comm": "1626.T", "Electric/Gas": "1628.T", "Electronics": "1631.T", "Pharma": "1632.T", "Foods": "1633.T"
-}
-
-# --- Stock Universes (Approx 200 per market) ---
-US_STOCKS = {
-    "Technology": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","CSCO","INTU","IBM","AMD","QCOM","TXN","ADI","MU","AMAT","LRCX","KLAC","SNPS","CDNS","NOW","PANW","CRWD"],
-    "Healthcare": ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","DHR","ISRG","VRTX","BMY","GILD","PFE","REGN","SYK","BSX","MDT","ZTS","HCA","CVS","CI"],
-    "Financials": ["JPM","BAC","WFC","C","GS","MS","SCHW","BLK","AXP","COF","PNC","USB","TFC","MMC","AIG","MET","PRU","AFL","CB","ICE","SPGI","V","MA"],
-    "Cons. Disc": ["AMZN","TSLA","HD","MCD","NKE","SBUX","LOW","BKNG","TJX","ROST","GM","F","MAR","HLT","EBAY","CMG","YUM","LULU","DHI","LEN","ORLY"],
-    "Cons. Staples": ["PG","KO","PEP","WMT","COST","PM","MO","MDLZ","CL","KMB","GIS","KHC","SYY","KR","TGT","EL","HSY","STZ","KDP","WBA"],
-    "Industrials": ["GE","CAT","DE","HON","UNP","UPS","RTX","LMT","BA","MMM","ETN","EMR","ITW","NSC","WM","FDX","NOC","GD","PCAR","ROK"],
-    "Energy": ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO","OXY","KMI","HAL","BKR","DVN","HES","APA","FANG","WMB","OKE"],
-    "Materials": ["LIN","APD","SHW","ECL","FCX","NEM","DOW","DD","NUE","VMC","MLM","ALB","CF","MOS","IP","CTVA"],
-    "Utilities": ["NEE","DUK","SO","EXC","AEP","SRE","XEL","D","ED","PEG","EIX","PCG","AWK","WEC","ES","PPL"],
-    "Real Estate": ["AMT","PLD","CCI","EQIX","SPG","O","PSA","WELL","DLR","AVB","EQR","VTR","IRM","VICI","SBAC","EXR"],
+    "Technology": "XLK",
+    "Healthcare": "XLV",
+    "Financials": "XLF",
+    "Cons. Discretionary": "XLY",
+    "Cons. Staples": "XLP",
+    "Industrials": "XLI",
+    "Energy": "XLE",
+    "Materials": "XLB",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
 }
 
-JP_STOCKS = {
-    "Energy": ["1605.T","5020.T","9501.T","9502.T","9503.T","9531.T","9532.T"],
-    "Materials": ["5401.T","5411.T","5713.T","3407.T","4005.T","4188.T","4901.T","5201.T","4063.T","4452.T"],
-    "Industrials": ["6301.T","6367.T","7011.T","7012.T","7013.T","6501.T","6113.T","6273.T","6473.T"],
-    "Auto/Trans": ["7203.T","7267.T","6902.T","7201.T","7270.T","7272.T","9101.T","9104.T","9020.T","9022.T"],
-    "Retail": ["8001.T","8002.T","8031.T","8058.T","8053.T","3382.T","9983.T","8267.T","2914.T"],
-    "Banks": ["8306.T","8316.T","8411.T","8308.T","8309.T","7182.T","5831.T"],
-    "Financials": ["8591.T","8604.T","8766.T","8725.T","8750.T","8697.T","8630.T"],
-    "Real Estate": ["8801.T","8802.T","8830.T","3289.T","3003.T"],
-    "Info/Comm": ["9432.T","9433.T","9434.T","9984.T","4689.T","6098.T","4755.T","4385.T","9613.T","9602.T"],
-    "Electric/Gas": ["9501.T","9503.T","9531.T"], # Merged into Energy usually, but kept for ETF mapping
-    "Electronics": ["8035.T","6857.T","6146.T","6723.T","6920.T","6758.T","6981.T","6954.T","6702.T","6752.T","7741.T","7735.T","6503.T"],
-    "Pharma": ["4502.T","4503.T","4507.T","4519.T","4523.T","4568.T","4578.T"],
-    "Foods": ["2801.T","2802.T","2502.T","2503.T","2269.T"],
+# 日本はセクター名を日本語に統一（TOPIX-17の発想）
+JP_TOPIX17_ETF_JA = {
+    "エネルギー": "1617.T",
+    "建設・資材": "1618.T",
+    "素材・化学": "1619.T",
+    "産業機械": "1620.T",
+    "自動車・輸送機器": "1621.T",
+    "商社・小売": "1622.T",
+    "銀行": "1623.T",
+    "金融（除く銀行）": "1624.T",
+    "不動産": "1625.T",
+    "情報通信": "1626.T",
+    "サービス": "1627.T",
+    "電力・ガス": "1628.T",
+    "鉄鋼・非鉄": "1629.T",
+    "機械": "1630.T",
+    "電機・精密": "1631.T",
+    "医薬品": "1632.T",
+    "食品": "1633.T",
 }
 
 MARKETS = {
-    "🇺🇸 US": {"bench": US_BENCH, "name": "S&P 500", "sectors": US_SECTOR_ETF, "stocks": US_STOCKS},
-    "🇯🇵 JP": {"bench": JP_BENCH, "name": "TOPIX", "sectors": JP_TOPIX17_ETF, "stocks": JP_STOCKS},
+    "🇺🇸 米国": {"bench": US_BENCH, "bench_name": "S&P 500（SPY）", "sector_etf": US_SECTOR_ETF},
+    "🇯🇵 日本": {"bench": JP_BENCH, "bench_name": "TOPIX（1306.T）", "sector_etf": JP_TOPIX17_ETF_JA},
 }
 
-# --- EXTENSIVE NAME DATABASE (For Instant Speed) ---
-# API calls are slow. Pre-defining these makes the app feel "Pro".
-NAME_DB = {
-    # JP
-    "1306.T": "TOPIX ETF", "1605.T": "INPEX", "5020.T": "ENEOS", "9501.T": "東電EP", "5401.T": "日本製鉄",
-    "4063.T": "信越化学", "4452.T": "花王", "6301.T": "コマツ", "6501.T": "日立製作所", "7011.T": "三菱重工",
-    "7203.T": "トヨタ", "7267.T": "ホンダ", "6902.T": "デンソー", "8031.T": "三井物産", "8058.T": "三菱商事",
-    "8001.T": "伊藤忠", "9983.T": "ファストリ", "8306.T": "三菱UFJ", "8316.T": "三井住友", "8411.T": "みずほ",
-    "8591.T": "オリックス", "8801.T": "三井不動産", "8802.T": "三菱地所", "9432.T": "NTT", "9433.T": "KDDI",
-    "9984.T": "ソフトバンクG", "4661.T": "OLC", "6098.T": "リクルート", "8035.T": "東京エレク", "6857.T": "アドバンテスト",
-    "6146.T": "ディスコ", "6920.T": "レーザーテク", "6758.T": "ソニーG", "6723.T": "ルネサス", "6981.T": "村田製",
-    "6954.T": "ファナック", "4502.T": "武田薬品", "4568.T": "第一三共", "4519.T": "中外製薬", "7741.T": "HOYA",
-    "2914.T": "JT", "7974.T": "任天堂", "6702.T": "富士通", "6503.T": "三菱電機", "7735.T": "SCREEN",
-    "7182.T": "ゆうちょ", "3382.T": "セブン&アイ", "4503.T": "アステラス", "4507.T": "塩野義",
-    # US
-    "SPY": "S&P500 ETF", "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "AMZN": "Amazon",
-    "GOOGL": "Alphabet", "META": "Meta", "TSLA": "Tesla", "AVGO": "Broadcom", "ORCL": "Oracle",
-    "CRM": "Salesforce", "ADBE": "Adobe", "AMD": "AMD", "QCOM": "Qualcomm", "NFLX": "Netflix",
-    "LLY": "Eli Lilly", "UNH": "UnitedHealth", "JNJ": "J&J", "ABBV": "AbbVie", "MRK": "Merck",
-    "JPM": "JPMorgan", "BAC": "BofA", "WFC": "Wells Fargo", "V": "Visa", "MA": "Mastercard",
-    "HD": "Home Depot", "MCD": "McDonald's", "NKE": "Nike", "SBUX": "Starbucks", "COST": "Costco",
-    "PG": "P&G", "KO": "Coca-Cola", "PEP": "PepsiCo", "WMT": "Walmart", "XOM": "Exxon",
-    "CVX": "Chevron", "GE": "GE Aerospace", "CAT": "Caterpillar", "BA": "Boeing", "LMT": "Lockheed",
-    "LIN": "Linde", "NEE": "NextEra", "AMT": "American Tower", "PLD": "Prologis", "INTC": "Intel",
+# =========================
+# Stock universes (extendable)
+# ここは辞書を増やしていく前提。落ちない設計（chunk + gatekeeper）。
+# =========================
+US_STOCKS_BY_SECTOR: Dict[str, List[str]] = {
+    "Technology": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","CSCO","INTU","IBM","AMD","QCOM","TXN","ADI","MU","AMAT","LRCX","KLAC","SNPS","CDNS","NOW","PANW","CRWD","ANET","WDAY","ZS","NET","DDOG"],
+    "Healthcare": ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","AMGN","DHR","ISRG","VRTX","BMY","GILD","PFE","REGN","SYK","BSX","MDT","ZTS","HCA","CI","ELV","CVS","HUM","BDX","EW","IQV"],
+    "Financials": ["JPM","BAC","WFC","C","GS","MS","SCHW","BLK","AXP","COF","PNC","USB","TFC","MMC","AIG","MET","PRU","AFL","CB","ICE","SPGI","CME","BK","PGR","TRV","ALL","DFS","V","MA"],
+    "Cons. Discretionary": ["AMZN","TSLA","HD","MCD","NKE","SBUX","LOW","BKNG","TJX","ROST","GM","F","MAR","HLT","EBAY","CMG","YUM","LULU","DHI","LEN","RCL","ABNB","ORLY","AZO"],
+    "Cons. Staples": ["PG","KO","PEP","WMT","COST","PM","MO","MDLZ","CL","KMB","GIS","KHC","KR","TGT","EL","HSY","STZ","KDP","WBA","MNST"],
+    "Industrials": ["GE","CAT","DE","HON","UNP","UPS","RTX","LMT","BA","MMM","ETN","EMR","ITW","NSC","WM","FDX","NOC","GD","PCAR","ROK","CSX","ODFL","GWW","FAST","CTAS","AME","URI","DAL","LUV"],
+    "Energy": ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO","OXY","KMI","HAL","BKR","DVN","HES","APA","FANG","WMB","TRGP","OKE","EQT"],
+    "Materials": ["LIN","APD","SHW","ECL","FCX","NEM","DOW","DD","NUE","VMC","MLM","ALB","CF","MOS","IP","BALL","EMN","LYB","PPG"],
+    "Utilities": ["NEE","DUK","SO","EXC","AEP","SRE","XEL","D","ED","PEG","EIX","PCG","AWK","WEC","ES","PPL","ETR","CMS","DTE"],
+    "Real Estate": ["AMT","PLD","CCI","EQIX","SPG","O","PSA","WELL","DLR","AVB","EQR","VTR","IRM","VICI","SBAC","EXR","MAA","ARE","KIM","INVH"],
 }
 
-# ==========================================
-# 3. Engines & Logic
-# ==========================================
+JP_STOCKS_BY_SECTOR_JA: Dict[str, List[str]] = {
+    "エネルギー": ["1605.T","5020.T","5019.T"],
+    "建設・資材": ["1801.T","1802.T","1803.T","1812.T","1925.T","1928.T","5201.T","5332.T"],
+    "素材・化学": ["4005.T","4021.T","4042.T","4063.T","4188.T","4452.T","4631.T","4901.T","4911.T","3407.T","3402.T"],
+    "産業機械": ["6301.T","6305.T","6367.T","6471.T","6473.T","6113.T","6273.T","6326.T","6361.T"],
+    "自動車・輸送機器": ["7203.T","7267.T","6902.T","7201.T","7211.T","7270.T","7261.T","7272.T","9101.T","9104.T","9020.T","9022.T"],
+    "商社・小売": ["8001.T","8002.T","8003.T","8031.T","8058.T","8053.T","3382.T","8267.T","9983.T","3092.T","7453.T"],
+    "銀行": ["8306.T","8316.T","8411.T","8308.T","8331.T","8354.T","8355.T","7182.T","5831.T"],
+    "金融（除く銀行）": ["8591.T","8604.T","8630.T","8725.T","8766.T","8750.T","8697.T"],
+    "不動産": ["8801.T","8802.T","8830.T","3289.T","3003.T","3231.T"],
+    "情報通信": ["9432.T","9433.T","9434.T","9984.T","4689.T","4755.T","6098.T","4385.T","3923.T","2413.T"],
+    "サービス": ["4661.T","9735.T","9766.T","4324.T","2127.T","6028.T","3038.T","6183.T"],
+    "電力・ガス": ["9501.T","9502.T","9503.T","9531.T","9532.T","9533.T"],
+    "鉄鋼・非鉄": ["5401.T","5406.T","5411.T","5711.T","5713.T","5802.T","5801.T","3436.T"],
+    "機械": ["6146.T","6268.T","6302.T","6331.T","6472.T","7004.T"],
+    "電機・精密": ["8035.T","6857.T","6723.T","6920.T","7735.T","6963.T","6762.T","6861.T","6981.T","6758.T","6501.T","6702.T","6752.T","6954.T"],
+    "医薬品": ["4502.T","4503.T","4507.T","4519.T","4568.T","4578.T","4587.T","4151.T"],
+    "食品": ["2801.T","2802.T","2269.T","2914.T","2502.T","2503.T","2002.T","2201.T","2222.T"],
+}
 
+def get_stocks_by_sector(market_key: str) -> Dict[str, List[str]]:
+    return US_STOCKS_BY_SECTOR if market_key == "🇺🇸 米国" else JP_STOCKS_BY_SECTOR_JA
+
+# =========================
+# Company Name DB (fast)
+# =========================
+NAME_DB: Dict[str, str] = {
+    "SPY":"S&P500 ETF","XLK":"テクノロジーETF","XLV":"ヘルスケアETF","XLF":"金融ETF","XLY":"一般消費財ETF",
+    "XLP":"生活必需品ETF","XLI":"資本財ETF","XLE":"エネルギーETF","XLB":"素材ETF","XLU":"公益ETF","XLRE":"不動産ETF",
+    "1306.T":"TOPIX連動型上場投信",
+    "1617.T":"TOPIX-17 エネルギー","1618.T":"TOPIX-17 建設・資材","1619.T":"TOPIX-17 素材・化学","1620.T":"TOPIX-17 産業機械",
+    "1621.T":"TOPIX-17 自動車・輸送","1622.T":"TOPIX-17 商社・小売","1623.T":"TOPIX-17 銀行","1624.T":"TOPIX-17 金融（除く銀行）",
+    "1625.T":"TOPIX-17 不動産","1626.T":"TOPIX-17 情報通信","1627.T":"TOPIX-17 サービス","1628.T":"TOPIX-17 電力・ガス",
+    "1629.T":"TOPIX-17 鉄鋼・非鉄","1630.T":"TOPIX-17 機械","1631.T":"TOPIX-17 電機・精密","1632.T":"TOPIX-17 医薬品","1633.T":"TOPIX-17 食品",
+    "8035.T":"東京エレクトロン","6857.T":"アドバンテスト","6920.T":"レーザーテック","6146.T":"ディスコ",
+    "8306.T":"三菱UFJ FG","8316.T":"三井住友FG","8411.T":"みずほFG",
+    "7203.T":"トヨタ自動車","9984.T":"ソフトバンクG","9983.T":"ファーストリテイリング","8031.T":"三井物産","8058.T":"三菱商事",
+    "4661.T":"オリエンタルランド","6098.T":"リクルートHD","9432.T":"NTT","9433.T":"KDDI","9434.T":"ソフトバンク",
+    "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","AMZN":"Amazon","TSLA":"Tesla","GOOGL":"Alphabet","META":"Meta",
+    "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","JPM":"JPMorgan","BAC":"Bank of America","V":"Visa","MA":"Mastercard",
+}
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_company_name(ticker: str) -> str:
+    return NAME_DB.get(ticker, ticker)
+
+# =========================
+# Fetch engine (chunk + cache)
+# =========================
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_bulk_cached(tickers: Tuple[str, ...], period: str = "12mo", chunk_size: int = 80) -> pd.DataFrame:
+def fetch_bulk_cached(tickers: Tuple[str, ...], period: str = FETCH_PERIOD, chunk_size: int = 80) -> pd.DataFrame:
     tickers = tuple(dict.fromkeys([t for t in tickers if isinstance(t, str) and t.strip()]))
     frames = []
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
         try:
             raw = yf.download(
-                " ".join(chunk), period=period, interval="1d", group_by="ticker",
-                auto_adjust=True, threads=True, progress=False
+                " ".join(chunk),
+                period=period,
+                interval="1d",
+                group_by="ticker",
+                auto_adjust=True,
+                threads=True,
+                progress=False,
             )
-            if not raw.empty: frames.append(raw)
-        except: continue
-    if not frames: return pd.DataFrame()
+            if raw is not None and not raw.empty:
+                frames.append(raw)
+        except Exception:
+            continue
+    if not frames:
+        return pd.DataFrame()
     return pd.concat(frames, axis=1)
 
-@st.cache_data(ttl=86400)
-def get_name(ticker: str) -> str:
-    # 1. Database (Instant)
-    if ticker in NAME_DB: return NAME_DB[ticker]
-    # 2. Fallback
-    return ticker
-
-@st.cache_data(ttl=1800)
-def get_news(ticker: str) -> List[dict]:
-    try:
-        return yf.Ticker(ticker).news[:8]
-    except: return []
-
-# --- Math & Audit ---
 def extract_close(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
-    if df.empty: return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
     try:
-        # Robust MultiIndex handling
-        if isinstance(df.columns, pd.MultiIndex):
+        if isinstance(df.columns, pd.MultiIndex) and df.columns.nlevels == 2:
             lv0 = set(df.columns.get_level_values(0))
             lv1 = set(df.columns.get_level_values(1))
-            if "Close" in lv0: close = df.xs("Close", axis=1, level=0)
-            elif "Close" in lv1: close = df.xs("Close", axis=1, level=1)
-            else: return pd.DataFrame()
-        else: return pd.DataFrame() # Single level not expected with group_by='ticker'
-        
-        close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
-        # Filter only expected columns
-        keep = [c for c in expected if c in close.columns]
-        return close[keep]
-    except: return pd.DataFrame()
+            if "Close" in lv0:
+                close = df.xs("Close", axis=1, level=0)
+            elif "Close" in lv1:
+                close = df.xs("Close", axis=1, level=1)
+            else:
+                return pd.DataFrame()
+            close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
+            keep = [c for c in expected if c in close.columns]
+            return close[keep]
+        if "Close" in df.columns:
+            return pd.DataFrame({expected[0]: pd.to_numeric(df["Close"], errors="coerce")}).dropna(how="all")
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
+# =========================
+# Analytics / Gatekeeper
+# =========================
 def zscore(s: pd.Series) -> pd.Series:
     s = pd.to_numeric(s, errors="coerce")
-    if s.std() == 0 or s.isna().all(): return pd.Series(0.0, index=s.index)
-    return (s - s.mean()) / s.std(ddof=0)
+    if s.isna().all():
+        return pd.Series(0.0, index=s.index)
+    mu = float(s.mean(skipna=True))
+    sig = float(s.std(ddof=0, skipna=True))
+    if sig == 0.0 or np.isnan(sig):
+        return pd.Series(0.0, index=s.index)
+    return (s - mu) / sig
 
-def calc_stats(s: pd.Series, b: pd.Series, win: int) -> Dict:
-    # Safe calc returning None if invalid
-    if len(s) < win+1 or len(b) < win+1: return None
-    s_win, b_win = s.tail(win+1), b.tail(win+1)
-    if s_win.isna().any() or b_win.isna().any(): return None
-    
-    p_ret = (s_win.iloc[-1]/s_win.iloc[0]-1)*100
-    b_ret = (b_win.iloc[-1]/b_win.iloc[0]-1)*100
-    
-    # Accel
-    half = max(1, win//2)
-    s_half = s_win.tail(half+1)
-    p_half = (s_half.iloc[-1]/s_half.iloc[0]-1)*100
-    accel = p_half - (p_ret/2)
-    
-    # DD
-    dd = abs(((s_win/s_win.cummax()-1)*100).min())
-    
-    # Stable (Short term alignment)
-    s_short = s.tail(6).dropna()
-    b_short = b.tail(6).dropna()
-    stable = "⚠️"
-    if len(s_short)==6 and len(b_short)==6:
-        rs_short = (s_short.iloc[-1]/s_short.iloc[0]-1) - (b_short.iloc[-1]/b_short.iloc[0]-1)
-        if np.sign(rs_short) == np.sign(p_ret - b_ret): stable = "✅"
-    
-    return {"RS": p_ret - b_ret, "Accel": accel, "MaxDD": dd, "Stable": stable, "Ret": p_ret}
+def calc_return(series: pd.Series, win: int) -> float:
+    s = series.tail(win + 1)
+    if len(s) < win + 1 or s.isna().any():
+        return np.nan
+    return float((s.iloc[-1] / s.iloc[0] - 1.0) * 100.0)
 
-def audit_data(expected: List[str], df: pd.DataFrame, win: int):
-    present = [t for t in expected if t in df.columns]
-    if not present: return {"ok": False, "msg": "No data found"}
-    
-    # Check sync (mode date)
-    last_dates = df[present].apply(lambda x: x.last_valid_index())
+def max_dd(series: pd.Series, win: int) -> float:
+    s = series.tail(win + 1)
+    if len(s) < win + 1 or s.isna().any():
+        return np.nan
+    dd = (s / s.cummax() - 1.0) * 100.0
+    return float(abs(dd.min()))
+
+def vol_ann(series: pd.Series, win: int) -> float:
+    s = series.tail(win + 1)
+    if len(s) < win + 1 or s.isna().any():
+        return np.nan
+    r = s.pct_change().dropna()
+    if r.empty:
+        return np.nan
+    return float(r.std(ddof=0) * np.sqrt(252) * 100.0)
+
+# 互換用：あなたのログに出た関数名を必ず定義（NameError根絶）
+def vol_annualized(series: pd.Series, win: int) -> float:
+    return vol_ann(series, win)
+
+def rs_stable(asset: pd.Series, bench: pd.Series) -> str:
+    a = asset.tail(6).dropna()
+    b = bench.tail(6).dropna()
+    if len(a) < 6 or len(b) < 6:
+        return "⚠️"
+    rs_short = (a.iloc[-1] / a.iloc[0] - 1.0) - (b.iloc[-1] / b.iloc[0] - 1.0)
+    return "✅" if np.sign(rs_short) != 0 else "⚠️"
+
+def audit_gatekeeper(expected: List[str], close_df: pd.DataFrame, win: int) -> Dict[str, Any]:
+    exp = len(expected)
+    if close_df is None or close_df.empty:
+        return {"expected": exp, "present": 0, "synced": 0, "computable": 0, "mode_date": None, "computable_list": []}
+    present = [t for t in expected if t in close_df.columns]
+    if not present:
+        return {"expected": exp, "present": 0, "synced": 0, "computable": 0, "mode_date": None, "computable_list": []}
+    last_dates = close_df[present].apply(lambda x: x.last_valid_index())
     mode_date = last_dates.mode().iloc[0] if not last_dates.mode().empty else None
-    
-    # Computable list
+    synced_mask = (last_dates == mode_date)
     computable = []
     for t in present:
-        if last_dates[t] == mode_date and df[t].tail(win+1).notna().sum() >= win+1:
-            computable.append(t)
-            
+        if not bool(synced_mask.get(t, False)):
+            continue
+        tail = close_df[t].tail(win + 1)
+        if len(tail) < win + 1 or tail.isna().any():
+            continue
+        computable.append(t)
     return {
-        "ok": True, "present": len(present), "expected": len(expected),
-        "computable": len(computable), "computable_list": computable,
-        "mode_date": mode_date
+        "expected": exp, "present": len(present), "synced": int(synced_mask.sum()),
+        "computable": len(computable), "mode_date": mode_date, "computable_list": computable
     }
 
-# ==========================================
-# 4. Main App Logic
-# ==========================================
-def main():
-    st.markdown("<div class='brand'>AlphaLens <span style='font-weight:300'>Command Center</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='subbrand'>Integrity Gatekeeper × Pro-Grade Analytics × AI Agents Debate</div>", unsafe_allow_html=True)
-    
-    # --- Sidebar / Deck ---
-    with st.container():
-        st.markdown("<div class='deck'>", unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
-        with c1: market_key = st.selectbox("Market", list(MARKETS.keys()))
-        with c2: lookback_key = st.selectbox("Window", list(LOOKBACKS.keys()), index=1)
-        with c3: st.caption(f"Fetch: {FETCH_PERIOD} (Buffered)"); st.progress(100)
-        with c4: 
-            st.write("")
-            sync = st.button("SYNC", type="primary", use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+def cls_ratio(r: float) -> str:
+    if r >= 0.9: return "status-green"
+    if r >= 0.7: return "status-yellow"
+    return "status-red"
 
-    # Setup
-    m_cfg = MARKETS[market_key]
-    win = LOOKBACKS[lookback_key]
-    bench = m_cfg["bench"]
-    
-    # --- STEP 1: Core Data (Bench + Sectors) ---
-    core_tickers = [bench] + list(m_cfg["sectors"].values())
-    
-    # Sync Logic
-    if sync or "core_df" not in st.session_state or st.session_state.get("last_m") != market_key:
-        with st.spinner("Establishing secure link to market data..."):
-            raw = fetch_bulk_cached(tuple(core_tickers), FETCH_PERIOD)
-            st.session_state.core_df = extract_close(raw, core_tickers)
-            st.session_state.last_m = market_key
-    
-    core_df = st.session_state.core_df
-    audit = audit_data(core_tickers, core_df, win)
-    
-    # Integrity Panel
-    if not audit["ok"] or bench not in audit["computable_list"]:
-        st.error(f"❌ Critical Data Failure: Benchmark {bench} is unavailable or out of sync.")
-        st.stop()
-        
-    st.markdown(f"""
-    <div class='metric-box'>
-        <span class='cert'>GATEKEEPER: PASSED</span>
-        <span class='muted'> | Mode Date: {str(audit['mode_date']).split()[0]} | Health: {audit['computable']}/{audit['expected']} sources</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Market Overview
-    b_stats = calc_stats(core_df[bench], core_df[bench], win) # Self compare for return
-    b_ret = b_stats["Ret"]
-    
-    # Sector Calc
-    sec_data = []
-    sec_returns = []
-    for s_name, s_ticker in m_cfg["sectors"].items():
-        if s_ticker in audit["computable_list"]:
-            stats = calc_stats(core_df[s_ticker], core_df[bench], win)
-            if stats:
-                sec_returns.append(stats["Ret"])
-                sec_data.append({"Sector": s_name, "Ticker": s_ticker, "Return": stats["Ret"], "RS": stats["RS"]})
-    
-    # Market Comment
-    leaders = sum(1 for r in sec_returns if r > b_ret)
-    breadth = leaders / len(sec_returns) if sec_returns else 0
-    sentiment = "RISK ON" if b_ret > 0 and breadth > 0.5 else "RISK OFF" if b_ret < 0 else "NEUTRAL"
-    
-    st.markdown("---")
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st.metric(m_cfg["name"], f"{b_ret:+.2f}%", f"{breadth*100:.0f}% Breadth")
-    with c2:
-        st.info(f"**AI Market Insight**: Market is **{sentiment}**. {leaders} out of {len(sec_returns)} sectors are outperforming the benchmark. Deviation: {np.std(sec_returns):.2f}")
+def kpi(label: str, value: str, ratio: float):
+    st.markdown(f"<div class='kpi {cls_ratio(ratio)}'><div class='t'>{label}</div><b>{value}</b></div>", unsafe_allow_html=True)
 
-    # --- STEP 2: Sector Comparison ---
-    st.subheader("📊 Sector Rotation")
-    if sec_data:
-        sdf = pd.DataFrame(sec_data).sort_values("RS", ascending=True)
-        # Add Market bar
-        sdf = pd.concat([sdf, pd.DataFrame([{"Sector": "MARKET", "Return": b_ret, "RS": 0}])])
-        
-        fig = px.bar(sdf, x="RS", y="Sector", orientation='h', color="RS", 
-                     color_continuous_scale="RdYlGn", title=f"Relative Strength vs {bench}")
-        fig.update_layout(height=400, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#e6edf3')
-        
-        # Interaction
-        event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
-        
-        # Selection Logic
-        click_sec = None
-        if event and event.get("selection", {}).get("points"):
-            click_sec = event["selection"]["points"][0]["y"]
-        
-        # Buttons fallback
-        st.markdown("<div class='muted'>Quick Select:</div>", unsafe_allow_html=True)
-        cols = st.columns(6)
-        btn_sec = None
-        for i, s in enumerate(m_cfg["sectors"].keys()):
-            if cols[i%6].button(s, key=f"btn_{s}", use_container_width=True):
-                btn_sec = s
-                
-        # Final Sector Decision
-        target_sector = btn_sec or click_sec or st.session_state.get("target_sector")
-        if target_sector not in m_cfg["sectors"]: target_sector = list(m_cfg["sectors"].keys())[0]
-        st.session_state.target_sector = target_sector
-    
-    # --- STEP 3: Deep Drilldown ---
-    st.markdown("---")
-    st.subheader(f"🔍 Forensic Analysis: {target_sector}")
-    
-    # Fetch Sector Stocks
-    stock_list = m_cfg["stocks"].get(target_sector, [])
-    full_list = [bench] + stock_list
-    
-    # Sector Cache
-    sec_cache_key = f"{market_key}_{target_sector}_{datetime.now().hour}" # 1 hour cache logic roughly
-    if sec_cache_key != st.session_state.get("sec_cache_key") or sync:
-        with st.spinner(f"Scanning {len(stock_list)} stocks in {target_sector}..."):
-            raw_s = fetch_bulk_cached(tuple(full_list), FETCH_PERIOD)
-            st.session_state.sec_df = extract_close(raw_s, full_list)
-            st.session_state.sec_cache_key = sec_cache_key
+def market_comment(bench_ret: float, leaders_ratio: float, dispersion: float) -> str:
+    if np.isnan(bench_ret):
+        return "指数の計算に必要なデータが不足しています。"
+    if bench_ret > 0 and leaders_ratio > 0.55:
+        tone = "リスクオン（上昇基調）"
+    elif bench_ret < 0 and leaders_ratio < 0.45:
+        tone = "リスクオフ（下落基調）"
+    else:
+        tone = "混在（方向感は限定的）"
+    rot = "ローテーション活発" if dispersion >= 2.0 else "ローテーション小"
+    breadth = "上昇の裾野が広い" if leaders_ratio >= 0.6 else "リーダー集中（幅が狭い）" if leaders_ratio <= 0.4 else "裾野は中立"
+    return f"{tone} / {breadth} / {rot}（指数 {bench_ret:+.2f}%・勝ちセクター比 {leaders_ratio:.0%}・分散 {dispersion:.2f}）"
 
-    sec_df = st.session_state.sec_df
-    s_audit = audit_data(full_list, sec_df, win)
-    
-    if bench not in s_audit["computable_list"]:
-        st.warning("Benchmark missing in sector data.")
-        st.stop()
-        
-    # Ranking Engine
-    results = []
-    valid_stocks = [t for t in s_audit["computable_list"] if t != bench]
-    
-    for t in valid_stocks:
-        stats = calc_stats(sec_df[t], sec_df[bench], win)
-        if stats:
-            stats["Ticker"] = t
-            stats["Name"] = get_name(t)
-            stats["Vol"] = vol_annualized(sec_df[t], win)
-            results.append(stats)
-            
-    if not results:
-        st.warning("No computable stocks found.")
-        st.stop()
-        
-    df = pd.DataFrame(results)
-    
-    # Apex Score
+def sector_outlook(sec_name: str, sec_ret: float, bench_ret: float, cohesion: float, dispersion: float) -> str:
+    if np.isnan(sec_ret) or np.isnan(bench_ret):
+        return f"{sec_name}：データ不足により短期見通しの生成を保留します。"
+    rel = sec_ret - bench_ret
+    stance = "先行（強い）" if rel > 0.8 else "遅行（弱い）" if rel < -0.8 else "概ね市場並み"
+    coh = "まとまり強" if (not np.isnan(cohesion) and cohesion >= 0.55) else "まとまり弱" if (not np.isnan(cohesion) and cohesion <= 0.35) else "中立"
+    dis = "選別余地大" if (not np.isnan(dispersion) and dispersion >= 2.0) else "選別余地小" if (not np.isnan(dispersion) and dispersion <= 1.0) else "中立"
+    return f"{sec_name}は直近{stance}（セクター {sec_ret:+.2f}% / 市場 {bench_ret:+.2f}% / 相対 {rel:+.2f}%）。セクター内は{coh}・{dis}。当面は『上位銘柄の持続性（Stable）』と『DD（下振れ耐性）』で取捨選別が有効です。"
+
+def compute_rank(close_df: pd.DataFrame, bench: str, targets: List[str], win: int) -> pd.DataFrame:
+    b = close_df[bench]
+    b_ret = calc_return(b, win)
+    rows = []
+    for t in targets:
+        if t == bench:
+            continue
+        s = close_df[t]
+        p_ret = calc_return(s, win)
+        if np.isnan(p_ret) or np.isnan(b_ret):
+            continue
+        rs = p_ret - b_ret
+        half = max(1, win // 2)
+        seg = s.tail(half + 1)
+        if len(seg) < half + 1 or seg.isna().any():
+            continue
+        p_half = float((seg.iloc[-1] / seg.iloc[0] - 1.0) * 100.0)
+        accel = p_half - (p_ret / 2.0)
+        dd = max_dd(s, win)
+        vol = vol_annualized(s, win)
+        stable = rs_stable(s, b)
+        rows.append({"Ticker": t, "RS": rs, "Accel": accel, "MaxDD": dd, "Vol": vol, "Stable": stable, "Ret": p_ret})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
     df["RS_z"] = zscore(df["RS"])
-    df["Acc_z"] = zscore(df["Accel"])
+    df["Accel_z"] = zscore(df["Accel"])
     df["DD_z"] = zscore(df["MaxDD"])
-    df["Apex"] = 0.6*df["RS_z"] + 0.25*df["Acc_z"] - 0.15*df["DD_z"]
-    df = df.sort_values("Apex", ascending=False).reset_index(drop=True)
-    
-    # AI Agents Logic (Deterministic)
-    def agent_verdict(r):
-        score = 0
-        reasons = []
-        # Momentum Agent
-        if r["RS"] > 0 and r["Accel"] > 0: score += 2; reasons.append("Momentum")
-        # Risk Agent
-        if r["Stable"] == "✅" and r["MaxDD"] < 10: score += 1; reasons.append("Stability")
-        # Quality Agent
-        if r["RS"] > 5: score += 1; reasons.append("Alpha")
-        
-        if score >= 3: return "STRONG", "badge-strong"
-        if score >= 1: return "WATCH", "badge-watch"
-        return "AVOID", "badge-avoid"
+    df["ApexScore"] = 0.60 * df["RS_z"] + 0.25 * df["Accel_z"] - 0.15 * df["DD_z"]
+    df = df.sort_values("ApexScore", ascending=False, na_position="last").reset_index(drop=True)
+    return df
 
-    df["Verdict"], df["Badge"] = zip(*df.apply(agent_verdict, axis=1))
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_news(ticker: str, max_items: int = 8) -> List[dict]:
+    try:
+        news = yf.Ticker(ticker).news or []
+        return news[:max_items]
+    except Exception:
+        return []
 
-    # --- UI: Top Picks & AI Debate ---
-    c1, c2 = st.columns([2, 1])
-    
+def build_news_panel(sources: List[str]) -> pd.DataFrame:
+    items = []
+    for src in sources:
+        for n in get_news(src, max_items=8):
+            title = n.get("title")
+            link = n.get("link")
+            pub = n.get("publisher") or ""
+            ts = n.get("providerPublishTime")
+            if title and link:
+                items.append({"title": title, "link": link, "publisher": pub, "ts": ts, "source": src})
+    if not items:
+        return pd.DataFrame()
+    df = pd.DataFrame(items).drop_duplicates(subset=["title"])
+    df = df.sort_values("ts", ascending=False, na_position="last").head(30)
+    return df
+
+# =========================
+# App Header + Command Deck
+# =========================
+st.markdown("<div class='brand'>AlphaLens</div>", unsafe_allow_html=True)
+st.markdown("<div class='subbrand'>嘘をつかない計器 × 地合い→セクター→個別（日本語）</div>", unsafe_allow_html=True)
+
+with st.container():
+    st.markdown("<div class='deck'>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1.1, 1.0, 0.9])
     with c1:
-        st.markdown("##### 🏆 Leaderboard")
-        # Custom Table
-        for i, row in df.head(5).iterrows():
-            st.markdown(f"""
-            <div class='card' style='display:flex; justify-content:space-between; align-items:center;'>
-                <div>
-                    <span class='muted'>#{i+1}</span>
-                    <span class='badge {row['Badge']}'>{row['Verdict']}</span>
-                    <span class='highlight' style='font-size:16px'>{row['Name']}</span>
-                    <span class='muted'>({row['Ticker']})</span>
-                </div>
-                <div style='text-align:right'>
-                    <div class='big-num'>{row['Apex']:.2f}</div>
-                    <div class='muted'>RS: {row['RS']:+.1f}% | Vol: {row['Vol']:.0f}%</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
+        market_key = st.selectbox("地域", list(MARKETS.keys()), index=0)
     with c2:
-        st.markdown("##### 🤖 AI Debate Log")
-        top = df.iloc[0]
-        news = get_news(top["Ticker"])
-        news_bias = "Positive" if len(news) > 0 else "Neutral"
-        
-        st.markdown(f"""
-        <div class='card'>
-            <div class='highlight'>Subject: {top['Name']}</div>
-            <div class='hr'></div>
-            <div style='font-size:13px'>
-            <b>Agent Momentum:</b> RS ({top['RS']:.1f}%) and Accel ({top['Accel']:.1f}) confirm strong trend.<br><br>
-            <b>Agent Risk:</b> Stability is {top['Stable']}. MaxDD is {top['MaxDD']:.1f}%.<br><br>
-            <b>Agent News:</b> {len(news)} articles found. Bias seems {news_bias}.<br>
-            <div class='hr'></div>
-            <b>Consensus:</b> {top['Verdict']} Buy.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        window_label = st.selectbox("期間", list(LOOKBACKS.keys()), index=1)
+    with c3:
+        st.write("")
+        sync_btn = st.button("SYNC", use_container_width=True, type="primary")
+    st.caption(f"データ取得期間: {FETCH_PERIOD}（12M計算の安定化バッファ）")
+    if st.session_state.get("ts"):
+        st.caption(f"最終同期: {st.session_state.ts}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Tabs: Full Table / Correlation / News ---
-    t1, t2, t3 = st.tabs(["📋 Full List", "🔗 Correlation Matrix", "📰 Latest News"])
-    
-    with t1:
-        st.dataframe(
-            df[["Name", "Ticker", "Verdict", "Apex", "RS", "Accel", "MaxDD", "Stable"]],
-            column_config={
-                "Apex": st.column_config.NumberColumn(format="%.2f"),
-                "RS": st.column_config.ProgressColumn(format="%.2f%%", min_value=-20, max_value=20),
-                "Accel": st.column_config.NumberColumn(format="%.2f"),
-                "MaxDD": st.column_config.NumberColumn(format="%.2f%%"),
-            },
-            hide_index=True, use_container_width=True
-        )
-        
-    with t2:
-        if len(valid_stocks) > 2:
-            rets = sec_df[valid_stocks].pct_change().tail(win)
-            corr = rets.corr()
-            fig_corr = px.imshow(corr, title=f"{target_sector} Correlation", color_continuous_scale="RdBu_r")
-            st.plotly_chart(fig_corr, use_container_width=True)
-            
-    with t3:
-        for n in news:
-            st.markdown(f"**{n['title']}**")
-            st.caption(f"{n['publisher']} - {datetime.fromtimestamp(n['providerPublishTime']).strftime('%Y-%m-%d')}")
-            st.markdown(f"[Read Article]({n['link']})")
-            st.markdown("---")
+win = LOOKBACKS[window_label]
+cfg = MARKETS[market_key]
+bench = cfg["bench"]
+bench_name = cfg["bench_name"]
+sector_etf = cfg["sector_etf"]
+sector_names = list(sector_etf.keys())
+stocks_by_sector = get_stocks_by_sector(market_key)
 
-if __name__ == "__main__":
-    main()
+# =========================
+# STEP 0 — Core sync (bench + sector ETFs)
+# =========================
+core_expected = [bench] + list(sector_etf.values())
+core_key = f"core::{market_key}"
+
+need_core = sync_btn or ("core_close" not in st.session_state) or (st.session_state.get("core_key") != core_key)
+if need_core:
+    with st.status("市場・セクターETFを同期中…", expanded=False):
+        raw = fetch_bulk_cached(tuple(core_expected), period=FETCH_PERIOD, chunk_size=80)
+        close = extract_close(raw, core_expected)
+        st.session_state.core_close = close
+        st.session_state.core_key = core_key
+        st.session_state.ts = datetime.now().strftime("%H:%M:%S")
+
+core_close: pd.DataFrame = st.session_state.get("core_close", pd.DataFrame())
+core_audit = audit_gatekeeper(core_expected, core_close, win)
+exp = max(1, int(core_audit["expected"]))
+health = core_audit["computable"] / exp
+
+# Gatekeeper（小さめ配置）
+g1, g2, g3, g4, g5 = st.columns([0.9, 0.9, 0.9, 1.1, 2.2])
+with g1: kpi("Present", f'{core_audit["present"]}/{exp}', core_audit["present"]/exp)
+with g2: kpi("Synced", f'{core_audit["synced"]}/{exp}', core_audit["synced"]/exp)
+with g3: kpi("Computable", f'{core_audit["computable"]}/{exp}', core_audit["computable"]/exp)
+with g4:
+    md = core_audit["mode_date"]
+    kpi("Mode Date", str(md).split()[0] if md is not None else "N/A", 1.0 if md is not None else 0.0)
+with g5:
+    st.markdown(f"<div class='cert'>[GATEKEEPER] 健全度 {health:.0%} / bench={bench}</div>", unsafe_allow_html=True)
+
+if bench not in core_audit["computable_list"]:
+    st.error(f"❌ ベンチマーク（{bench}）がこの期間で計算不能です。Gatekeeperにより停止します。")
+    st.stop()
+
+# =========================
+# STEP 1 — 市況概要（必ず最初に出す）
+# =========================
+bench_ret = calc_return(core_close[bench], win)
+sec_rows = []
+sec_rets = []
+for sec, etf in sector_etf.items():
+    if etf in core_audit["computable_list"]:
+        r = calc_return(core_close[etf], win)
+        if not np.isnan(r):
+            sec_rows.append({"Sector": sec, "Ticker": etf, "Return": r, "RS": r - bench_ret})
+            sec_rets.append(r)
+
+leaders_ratio = float(np.mean([(r - bench_ret) > 0 for r in sec_rets])) if sec_rets and not np.isnan(bench_ret) else 0.0
+dispersion = float(np.nanstd(sec_rets)) if sec_rets else 0.0
+
+st.info(f"🌐 **{market_key} / {bench_name} / {window_label}** — {market_comment(bench_ret, leaders_ratio, dispersion)}")
+
+# =========================
+# STEP 2 — Sector bar (horizontal + gradient + numeric labels + MARKET)
+# =========================
+st.subheader("📊 セクター比較（相対強度RS）")
+sec_df = pd.DataFrame(sec_rows)
+if sec_df.empty:
+    st.warning("セクターETFの計算可能データが不足しています。SYNCを押すか、期間を短くしてください。")
+    st.stop()
+
+market_row = pd.DataFrame([{"Sector": "MARKET", "Ticker": bench, "Return": bench_ret, "RS": 0.0}])
+sec_df2 = pd.concat([sec_df, market_row], ignore_index=True).sort_values("RS", ascending=True)
+sec_df2["RS_text"] = sec_df2["RS"].map(lambda x: f"{x:+.2f}%")
+sec_df2["Return_text"] = sec_df2["Return"].map(lambda x: f"{x:+.2f}%")
+
+fig = px.bar(
+    sec_df2,
+    x="RS", y="Sector", orientation="h",
+    color="RS", color_continuous_scale="RdYlGn",
+    text="RS_text",
+    hover_data={"Ticker": True, "Return_text": True, "RS_text": True, "RS": False, "Return": False},
+    title=f"RS（セクター − 市場） / {window_label}",
+)
+fig.update_traces(textposition="outside", cliponaxis=False)
+fig.update_layout(height=520, margin=dict(l=10, r=10, t=45, b=10))
+st.plotly_chart(fig, use_container_width=True)
+
+# セクター選択（確実に動くUI）
+st.markdown("<div class='muted'>セクターを選ぶと、この下に『動向・見通し → 視覚化 → 銘柄 → AI合議 → ニュース』が展開されます。</div>", unsafe_allow_html=True)
+selected = st.selectbox("セクター選択", sector_names, index=0)
+
+# =========================
+# STEP 3 — Sector Drilldown
+# =========================
+st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
+st.subheader("🔍 セクター詳細")
+
+sec_etf = sector_etf[selected]
+sec_ret = float(sec_df.loc[sec_df["Sector"] == selected, "Return"].values[0]) if (sec_df["Sector"] == selected).any() else np.nan
+
+sector_stocks = stocks_by_sector.get(selected, [])
+sector_expected = [bench] + list(dict.fromkeys([t for t in sector_stocks if isinstance(t, str) and t.strip()]))
+sector_key = f"sector::{market_key}::{selected}::{window_label}"
+
+need_sector = sync_btn or (sector_key not in st.session_state)
+if need_sector:
+    with st.status(f"{selected} の銘柄を同期中…", expanded=False):
+        raw_s = fetch_bulk_cached(tuple(sector_expected), period=FETCH_PERIOD, chunk_size=80)
+        close_s = extract_close(raw_s, sector_expected)
+        st.session_state[sector_key] = close_s
+
+sector_close: pd.DataFrame = st.session_state.get(sector_key, pd.DataFrame())
+sector_audit = audit_gatekeeper(sector_expected, sector_close, win)
+sec_exp = max(1, int(sector_audit["expected"]))
+sec_health = sector_audit["computable"] / sec_exp
+
+st.markdown(f"<div class='card'><b>セクターETF:</b> {get_company_name(sec_etf)}（{sec_etf}）<br><span class='muted'>計算可能 {sector_audit['computable']}/{sec_exp}（健全度 {sec_health:.0%}）</span></div>", unsafe_allow_html=True)
+
+if bench not in sector_audit["computable_list"]:
+    st.error("❌ セクター内データでベンチマークが計算不能です（Gatekeeper停止）。")
+    st.stop()
+
+computable_stocks = [t for t in sector_audit["computable_list"] if t != bench]
+if len(computable_stocks) < 5:
+    st.warning("⚠️ 監査を通過した銘柄が少なすぎます。辞書の銘柄数を増やすか、期間を短くしてください。")
+    st.stop()
+
+rets = sector_close[computable_stocks].pct_change().tail(win).dropna(how="all")
+cohesion = np.nan
+if isinstance(rets, pd.DataFrame) and not rets.empty and rets.shape[1] >= 3:
+    corr = rets.corr()
+    if isinstance(corr, pd.DataFrame) and not corr.empty and corr.shape[0] == corr.shape[1] and corr.shape[0] >= 2:
+        vals = corr.values.astype(float, copy=True)
+        di = np.diag_indices_from(vals)
+        vals[di] = np.nan
+        cohesion = float(np.nanmean(vals))
+disp = float(np.nanstd([calc_return(sector_close[t], win) for t in computable_stocks])) if computable_stocks else np.nan
+
+st.markdown(f"<div class='card'><b>直近動向・見通し</b><br><span class='muted'>{sector_outlook(selected, sec_ret, bench_ret, cohesion, disp)}</span></div>", unsafe_allow_html=True)
+
+rank_df = compute_rank(sector_close, bench=bench, targets=sector_audit["computable_list"], win=win)
+if rank_df.empty:
+    st.error("❌ スコア計算結果が空です（データ不足/欠損）。")
+    st.stop()
+
+rank_df["企業名"] = rank_df["Ticker"].apply(get_company_name)
+rank_df["判定"] = np.where((rank_df["RS"] > 0) & (rank_df["Accel"] > 0) & (rank_df["Stable"] == "✅") & (rank_df["MaxDD"] <= 10), "強い",
+                  np.where((rank_df["RS"] > 0) & (rank_df["Accel"] >= 0), "注視", "回避"))
+
+st.subheader("📌 視覚化（セクター内の勢力図）")
+top10 = rank_df.head(10).copy().sort_values("ApexScore", ascending=True)
+top10["Score_text"] = top10["ApexScore"].map(lambda x: f"{x:.2f}")
+fig_top = px.bar(
+    top10,
+    x="ApexScore", y="企業名", orientation="h",
+    color="ApexScore", color_continuous_scale="Viridis",
+    text="Score_text",
+    hover_data=["Ticker","RS","Accel","MaxDD","Vol","Stable","判定"],
+    title="ApexScore Top10（企業名）",
+)
+fig_top.update_traces(textposition="outside", cliponaxis=False)
+fig_top.update_layout(height=520, margin=dict(l=10, r=10, t=45, b=10))
+st.plotly_chart(fig_top, use_container_width=True)
+
+fig_scatter = px.scatter(
+    rank_df,
+    x="MaxDD", y="RS",
+    color="ApexScore",
+    hover_data=["企業名","Ticker","Accel","Vol","Stable","判定"],
+    title="RS × MaxDD（右上＝強い、左上＝強くて耐性）",
+)
+st.plotly_chart(fig_scatter, use_container_width=True)
+
+leaders = rank_df.head(3)["Ticker"].tolist()
+news_df = build_news_panel([bench, sec_etf] + leaders)
+
+st.subheader("🧠 AI合議（投資推奨）")
+top = rank_df.iloc[0]
+st.markdown(f"<div class='card'><b>第一候補:</b> {top['企業名']}（{top['Ticker']}）<br><span class='muted'>ApexScore {top['ApexScore']:.2f} / RS {top['RS']:+.2f}% / Accel {top['Accel']:+.2f} / DD {top['MaxDD']:.2f}% / Vol {top['Vol']:.1f}% / {top['Stable']}</span></div>", unsafe_allow_html=True)
+
+with st.expander("スコアの意味・注釈", expanded=True):
+    st.markdown(
+        "- **ApexScore**：RS（相対強度）/ Accel（加速）/ MaxDD（最大DD）を標準化して合成した相対順位スコア。\n"
+        "- **RS（%）**：銘柄リターン − 市場（ベンチマーク）リターン。\n"
+        "- **Accel**：直近半分窓が強いほどプラス（需給の加速）。\n"
+        "- **MaxDD（%）**：窓内最大ドローダウン（小さいほど耐性）。\n"
+        "- **Vol（%）**：年率ボラ（大きいほどブレが大きい）。\n"
+        "- **Stable**：直近の相対方向が維持されているかの簡易判定。"
+    )
+
+t1, t2 = st.tabs(["📊 銘柄テーブル（企業名中心）", "🗞️ ニュース（根拠）"])
+with t1:
+    show = rank_df[["企業名","Ticker","判定","ApexScore","RS","Accel","MaxDD","Vol","Stable"]].copy()
+    for col in ["ApexScore","RS","Accel","MaxDD","Vol"]:
+        show[col] = pd.to_numeric(show[col], errors="coerce").round(2)
+    st.dataframe(show, use_container_width=True, height=560, hide_index=True)
+with t2:
+    if news_df is None or news_df.empty:
+        st.warning("ニュースが取得できませんでした（yfinance側の欠落/制限の可能性）。")
+    else:
+        for _, r in news_df.iterrows():
+            src = r.get("source", "")
+            src_label = get_company_name(src) if isinstance(src, str) else ""
+            st.markdown(f"- [{r['title']}]({r['link']}) <span class='muted'>({r['publisher']} / src:{src_label})</span>", unsafe_allow_html=True)
