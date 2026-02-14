@@ -1,6 +1,6 @@
 import os
-import time
 import math
+import time
 import urllib.parse
 import urllib.request
 import traceback
@@ -15,22 +15,23 @@ import streamlit as st
 import yfinance as yf
 
 # ==========================================
-# 0. SYSTEM & ERROR HANDLER
+# 0. SYSTEM CONFIG
 # ==========================================
-st.set_page_config(page_title="AlphaLens Sovereign", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AlphaLens Architect", layout="wide", initial_sidebar_state="collapsed")
 
+# GLOBAL ERROR HANDLER
 def error_boundary(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            st.error(f"⚠️ SYSTEM ERROR: {str(e)}")
-            st.code(traceback.format_exc())
+            st.error(f"⚠️ CRITICAL SYSTEM FAILURE: {str(e)}")
+            st.code(traceback.format_exc(), language="python")
             st.stop()
     return wrapper
 
 # ==========================================
-# 1. PHANTOM UI (REFINED TABLE & FONTS)
+# 1. UI DESIGN (PHANTOM DARK + SELECTBOX FIX)
 # ==========================================
 st.markdown("""
 <style>
@@ -39,8 +40,8 @@ st.markdown("""
 :root {
   --bg: #000000;
   --panel: #0a0a0a;
-  --card: #121212;
-  --border: #333;
+  --card: #111111;
+  --border: #333333;
   --accent: #00f2fe;
   --text: #e0e0e0;
 }
@@ -55,61 +56,50 @@ h1, h2, h3, .brand {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   font-weight: 900 !important;
-  text-shadow: 0 0 25px rgba(0, 242, 254, 0.4);
+  text-shadow: 0 0 20px rgba(0, 242, 254, 0.5);
 }
 
 /* CONTAINERS */
 .deck { background: var(--panel); border: 1px solid var(--accent); padding: 20px; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0, 242, 254, 0.1); }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 15px; margin-bottom: 10px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 15px; margin-bottom: 10px; }
 
-/* TABLE REFINEMENT (CYBERPUNK STYLE) */
-div[data-testid="stDataFrame"] {
-    background-color: #050505 !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 0px !important;
-}
-div[data-testid="stDataFrame"] div[data-testid="stVerticalBlock"] {
-    background-color: #050505 !important;
-}
-[data-testid="stHeader"] {
-    background-color: #000 !important;
-    border-bottom: 2px solid var(--accent) !important;
-}
-[data-testid="stHeader"] * {
-    color: var(--accent) !important;
-    font-weight: 900 !important;
-}
+/* TABLE FIX */
+div[data-testid="stDataFrame"] { background-color: var(--bg) !important; border: 1px solid var(--border) !important; }
+[data-testid="stHeader"] { background-color: var(--panel) !important; border-bottom: 1px solid var(--accent) !important; }
 
-/* BUTTONS (HIGH CONTRAST) */
+/* SELECTBOX FIX */
+div[data-baseweb="select"] > div {
+    background-color: #111 !important;
+    border-color: #333 !important;
+    color: #fff !important;
+}
+div[data-baseweb="popover"], div[data-baseweb="menu"] {
+    background-color: #111 !important;
+    border: 1px solid #333 !important;
+}
+li[data-baseweb="option"] { color: #fff !important; }
+.stSelectbox label { color: #888 !important; }
+
+/* BUTTONS */
 button {
   background-color: #000 !important;
   color: var(--accent) !important;
-  border: 1px solid #444 !important;
+  border: 1px solid #333 !important;
   border-radius: 4px !important;
   font-weight: 800 !important;
   text-transform: uppercase;
-  transition: all 0.3s;
 }
-button:hover {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 15px var(--accent) !important;
-  color: #fff !important;
-}
+button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(--accent) !important; }
 
 /* METRICS */
-.kpi { border-left: 3px solid var(--border); background: var(--panel); padding: 10px; }
+.kpi { border-left: 4px solid var(--border); background: var(--panel); padding: 10px; }
 .kpi-val { font-size: 20px; color: var(--accent); font-weight: 700; }
 .kpi-lbl { font-size: 10px; color: #888; }
 .status-ok { border-color: #238636 !important; }
+.status-ng { border-color: #da3633 !important; }
 
 /* AI BOX */
-.ai-box {
-    border: 1px dashed var(--accent);
-    background: rgba(0,242,254,0.03);
-    padding: 20px;
-    margin-top: 15px;
-    border-radius: 8px;
-}
+.ai-box { border: 1px dashed var(--accent); background: rgba(0,242,254,0.05); padding: 20px; margin-top: 15px; line-height: 1.8; font-size: 12px; }
 
 /* UTILS */
 .muted { color: #888 !important; font-size: 10px !important; }
@@ -117,12 +107,11 @@ button:hover {
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. AUTH & AI SETUP
+# 2. AUTH & SETUP
 # ==========================================
 API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 APP_PASS = st.secrets.get("APP_PASSWORD")
 
-# Library Check
 try:
     import google.generativeai as genai
     HAS_LIB = True
@@ -148,13 +137,14 @@ def check_access():
 if not check_access(): st.stop()
 
 # ==========================================
-# 3. UNIVERSE & NAME DB (COMPLETE)
+# 3. UNIVERSE DEFINITIONS (FULL)
 # ==========================================
 LOOKBACKS = {"1W": 5, "1M": 21, "3M": 63, "12M": 252}
 FETCH_PERIOD = "24mo"
 
-# --- US SECTORS ---
 US_SEC = {"Tech":"XLK", "Health":"XLV", "Fin":"XLF", "Comm":"XLC", "Disc":"XLY", "Staples":"XLP", "Ind":"XLI", "Energy":"XLE", "Mat":"XLB", "Util":"XLU", "RE":"XLRE"}
+JP_SEC = {"通信":"1626.T", "電機":"1631.T", "自動車":"1621.T", "医薬":"1632.T", "銀行":"1623.T", "金融":"1624.T", "商社":"1622.T", "機械":"1630.T", "エネ":"1617.T", "建設":"1618.T", "素材":"1619.T", "食品":"1633.T", "電力":"1628.T", "不動産":"1625.T", "鉄鋼":"1629.T", "サービス":"1627.T", "産機":"1620.T"}
+
 US_STOCKS = {
     "Tech": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
     "Comm": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
@@ -168,9 +158,6 @@ US_STOCKS = {
     "Util": ["NEE","DUK","SO","AEP","SRE","EXC","XEL","D","PEG","ED","EIX","WEC","AWK","ES","PPL","ETR"],
     "RE": ["PLD","AMT","CCI","EQIX","SPG","PSA","O","WELL","DLR","AVB","EQR","VICI","CSGP","SBAC","IRM"],
 }
-
-# --- JP SECTORS ---
-JP_SEC = {"通信":"1626.T", "電機":"1631.T", "自動車":"1621.T", "医薬":"1632.T", "銀行":"1623.T", "金融":"1624.T", "商社":"1622.T", "機械":"1630.T", "エネ":"1617.T", "建設":"1618.T", "素材":"1619.T", "食品":"1633.T", "電力":"1628.T", "不動産":"1625.T", "鉄鋼":"1629.T", "サービス":"1627.T", "産機":"1620.T"}
 JP_STOCKS = {
     "通信": ["9432.T","9433.T","9434.T","9984.T","4689.T","4755.T","9613.T","9602.T","4385.T","6098.T","3659.T","3765.T"],
     "電機": ["8035.T","6857.T","6146.T","6920.T","6758.T","6501.T","6723.T","6981.T","6954.T","7741.T","6702.T","6503.T","6752.T","7735.T","6861.T"],
@@ -196,17 +183,14 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# --- COMPLETE NAME DB ---
+# FULL NAME DB
 NAME_DB = {
-    # ETF
     "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"通信","1631.T":"電機","1621.T":"自動車","1632.T":"医薬","1623.T":"銀行","1624.T":"金融","1622.T":"商社","1630.T":"機械","1617.T":"エネ","1618.T":"建設","1619.T":"素材","1633.T":"食品","1628.T":"電力","1625.T":"不動産","1629.T":"鉄鋼","1627.T":"サービス","1620.T":"産機",
-    # US
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
     "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
     "LIN":"Linde","NEE":"NextEra","DUK":"Duke","SO":"Southern","AMT":"Amer Tower","PLD":"Prologis","INTC":"Intel","CSCO":"Cisco","IBM":"IBM","UBER":"Uber","ABNB":"Airbnb","PYPL":"PayPal",
-    # JP (FULL)
     "8035.T":"東京エレク","6857.T":"アドバンテ","6146.T":"ディスコ","6920.T":"レーザーテク","6723.T":"ルネサス","6758.T":"ソニーG","6501.T":"日立","6981.T":"村田製","6954.T":"ファナック","7741.T":"HOYA","6702.T":"富士通","6503.T":"三菱電機","6752.T":"パナHD","7735.T":"SCREEN","6861.T":"キーエンス","6971.T":"京セラ","6645.T":"オムロン",
     "9432.T":"NTT","9433.T":"KDDI","9434.T":"ソフトバンク","9984.T":"SBG","4689.T":"LINEヤフー","6098.T":"リクルート","4755.T":"楽天G","9613.T":"NTTデータ","2413.T":"エムスリー","4385.T":"メルカリ",
     "7203.T":"トヨタ","7267.T":"ホンダ","6902.T":"デンソー","7201.T":"日産","7269.T":"スズキ","7270.T":"SUBARU","7272.T":"ヤマハ発","9101.T":"日本郵船","9104.T":"商船三井","9020.T":"JR東日本","9022.T":"JR東海","9005.T":"東急",
@@ -217,15 +201,14 @@ NAME_DB = {
     "1605.T":"INPEX","5020.T":"ENEOS","9501.T":"東電EP","9503.T":"関電","9531.T":"東ガス","4502.T":"武田","4568.T":"第一三共","4519.T":"中外","4503.T":"アステラス","4507.T":"塩野義","4523.T":"エーザイ",
     "8801.T":"三井不","8802.T":"三菱地所","8830.T":"住友不","4661.T":"OLC","9735.T":"セコム","4324.T":"電通","2127.T":"日本M&A","6028.T":"テクノプロ","2412.T":"ベネフィット","4689.T":"LINEヤフー",
     "6146.T":"ディスコ","6460.T":"セガサミー","6471.T":"日本精工","6268.T":"ナブテスコ","2801.T":"キッコーマン","2802.T":"味の素",
-    # ADDITIONAL MISSING
     "5711.T":"三菱マテ","5713.T":"住友鉱","5802.T":"住友電工","5406.T":"神戸鋼","3402.T":"東レ","4021.T":"日産化","4188.T":"三菱ケミ","4631.T":"DIC","3765.T":"ガンホー","3659.T":"ネクソン","2002.T":"日清製粉"
 }
 
 # ==========================================
-# 4. ENGINES & LOGIC
+# 4. CORE ENGINES
 # ==========================================
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_bulk(tickers: Tuple[str, ...]) -> pd.DataFrame:
+def fetch_data(tickers: Tuple[str, ...]) -> pd.DataFrame:
     tickers = tuple(dict.fromkeys([t for t in tickers if t]))
     frames = []
     chunk = 80
@@ -318,40 +301,59 @@ def check_ai_status():
     return "ONLINE"
 
 def call_ai(ticker: str, name: str, stats: Dict) -> str:
-    # 1. Gemini 1.5 Flash (Updated)
-    if HAS_LIB and API_KEY:
-        try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            prompt = f"""
-            プロの投資家として議論し、結論を出せ。
-            銘柄: {name} ({ticker})
-            指標: RS {stats['RS']:.2f}%, Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
-            騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%
-            
-            形式:
-            【モメンタム】...
-            【リスク】...
-            【結論】(強気/中立/弱気) 理由1行
-            """
-            return model.generate_content(prompt).text
-        except Exception as e: return f"AI Error: {str(e)}"
+    # 1. Fallback Strategy for Gemini models
+    # Try flash -> then pro -> then 1.0
+    models_to_try = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
     
+    if HAS_LIB and API_KEY:
+        for m_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(m_name)
+                prompt = f"""
+                プロ投資家として議論し、結論を出せ。
+                銘柄: {name} ({ticker})
+                指標: RS {stats['RS']:.2f}%, Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
+                騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%
+                
+                形式:
+                【モメンタム】...
+                【リスク】...
+                【結論】(強気/中立/弱気) 理由1行
+                """
+                resp = model.generate_content(prompt)
+                if resp.text: return resp.text
+            except Exception as e:
+                # Continue to next model if this one fails
+                continue
+                
     # 2. Rule-based Fallback
     v = "強気" if stats['RS']>0 and stats['Accel']>0 else "中立"
-    r = "LIB MISSING" if not HAS_LIB else "KEY MISSING"
+    r = "LIB MISSING" if not HAS_LIB else "KEY MISSING / API ERROR"
     return f"AI UNAVAILABLE ({r}). RULE-BASED:\nTREND: {v}\nRS: {stats['RS']:.2f}%"
 
 # ==========================================
-# 5. MAIN UI (PROTECTED)
+# 5. MAIN UI
 # ==========================================
 @error_boundary
 def main():
     st.markdown("<h2 class='brand'>ALPHALENS ARCHITECT</h2>", unsafe_allow_html=True)
     
-    # AI Status
-    status = check_ai_status()
-    color = "#238636" if status == "ONLINE" else "#da3633"
-    st.sidebar.markdown(f"**AI STATUS**: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
+    # AI Diagnosis (Sidebar)
+    with st.sidebar:
+        st.markdown("### SYSTEM DIAGNOSTIC")
+        status = check_ai_status()
+        color = "#238636" if status == "ONLINE" else "#da3633"
+        st.markdown(f"**AI STATUS**: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
+        
+        if st.button("PRINT MODELS", use_container_width=True):
+            if HAS_LIB and API_KEY:
+                try:
+                    models = [m.name for m in genai.list_models()]
+                    st.json(models)
+                except Exception as e:
+                    st.error(str(e))
+            else:
+                st.error("Cannot list models (Key/Lib missing)")
 
     with st.container():
         st.markdown("<div class='deck'>", unsafe_allow_html=True)
@@ -368,7 +370,7 @@ def main():
     win = LOOKBACKS[lookback_key]
     bench = m_cfg["bench"]
     
-    # SYNC
+    # 1. Sync
     core_tickers = [bench] + list(m_cfg["sectors"].values())
     if sync or "core_df" not in st.session_state or st.session_state.get("last_m") != market_key:
         with st.spinner("SYNCING MARKET DATA..."):
@@ -387,7 +389,7 @@ def main():
     with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>HEALTH</div><div class='kpi-val'>{audit_res['count']}/{audit_res['total']}</div></div>", unsafe_allow_html=True)
     with col2: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>DATE</div><div class='kpi-val'>{str(audit_res['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
 
-    # SECTOR OVERVIEW
+    # 2. Sector Overview
     b_stats = calc_metrics(core_df[bench], core_df[bench], win)
     
     sec_rows = []
@@ -416,7 +418,7 @@ def main():
     target_sector = btn_sec or click_sec or st.session_state.get("target_sector", list(m_cfg["sectors"].keys())[0])
     st.session_state.target_sector = target_sector
     
-    # FORENSIC
+    # 3. Drill Down
     st.markdown("---")
     st.subheader(f"FORENSIC: {target_sector}")
     
