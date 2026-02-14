@@ -1,254 +1,233 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import plotly.express as px
-from google import genai
-import json, threading, time, random
-from io import StringIO
-from urllib.parse import quote_plus
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
-import xml.etree.ElementTree as ET
 from datetime import datetime
 
-# --- 1. DESIGN: OBSIDIAN CONTROL CENTER ---
-st.set_page_config(page_title="AlphaLens v24.0", layout="wide")
+# ==========================================
+# CONFIGURATION & THEME
+# ==========================================
+st.set_page_config(page_title="Sentinel Prime v26.3.4", layout="wide", initial_sidebar_state="collapsed")
+
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;500&family=Orbitron:wght@400;700&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #000000; color: #e6edf3; }
-.header-kpi { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px; }
-.kpi-box { flex: 1; min-width: 140px; background: #0a0a0a; padding: 12px; border-radius: 8px; border: 1px solid #bc13fe; text-align: center; }
-.kpi-label { font-size: 0.6em; color: #bc13fe; text-transform: uppercase; letter-spacing: 1px; }
-.kpi-val { font-size: 1.1em; font-weight: bold; color: #00f2ff; font-family: 'Orbitron'; }
-.stButton>button { width: 100%; border-radius: 6px; height: 3.2em; background: #0a0a0a; color: #00f2ff; border: 1px solid #00f2ff; font-weight: bold; transition: 0.25s; }
-.stButton>button:hover { background: #00f2ff; color: #000; box-shadow: 0 0 20px #00f2ff; }
-.sync-btn>div>button { background: #bc13fe !important; color: white !important; border: none !important; }
-.glass-card { background: rgba(10, 10, 10, 0.98); padding: 22px; border-radius: 12px; border: 1px solid #222; border-left: 6px solid #00f2ff; margin-bottom: 20px; line-height: 1.8; }
-.news-tag { display: block; padding: 10px; background: #0a0a0a; border-radius: 6px; font-size: 0.85em; margin: 6px 0; border: 1px solid #333; text-decoration: none !important; }
+    .reportview-container { background: #0d1117; }
+    .command-deck { background: #161b22; padding: 15px; border-radius: 12px; border: 1px solid #1f6feb; margin-bottom: 20px; }
+    .stMetric { background: #1c2128; border-radius: 8px; padding: 12px; border-left: 5px solid #30363d; margin-bottom: 10px; }
+    .status-green { border-left: 5px solid #238636 !important; }
+    .status-yellow { border-left: 5px solid #d29922 !important; }
+    .status-red { border-left: 5px solid #da3633 !important; }
+    .next-action-card { background: #1c2128; border: 1px solid #30363d; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
+    .audit-cert { background: #0d1117; padding: 10px; border-radius: 8px; font-family: monospace; font-weight: bold; }
+    .cert-passed { border: 1px solid #238636; color: #238636; }
+    .cert-degraded { border: 1px solid #d29922; color: #d29922; }
+    .cert-failed { border: 1px solid #da3633; color: #da3633; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CORE UTILITY ---
-api_key = st.secrets.get("GEMINI_API_KEY")
-if not api_key: st.error("GEMINI_API_KEY MISSING"); st.stop()
-client = genai.Client(api_key=api_key)
-
-def calc_ret(series: pd.Series, days: int):
-    """厳密な期間計算エンジン"""
-    try:
-        s = pd.to_numeric(series, errors="coerce").dropna()
-        if len(s) <= days: return None
-        prev = float(s.iloc[-(days+1)])
-        now = float(s.iloc[-1])
-        if prev == 0: return None
-        return (now/prev - 1.0) * 100.0
-    except: return None
-
-def stream_ai_response(prompt, placeholder):
-    full = ""
-    try:
-        stream = client.models.generate_content(model="gemini-flash-latest", contents=prompt, stream=True)
-        for chunk in stream:
-            part = getattr(chunk, "text", "") or ""
-            full += part
-            if len(full) % 200 < len(part):
-                placeholder.markdown(f"<div class='glass-card' style='border-left-color:#bc13fe;'>{full}▌</div>", unsafe_allow_html=True)
-        placeholder.markdown(f"<div class='glass-card'>{full}</div>", unsafe_allow_html=True)
-        return full
-    except:
-        res = client.models.generate_content(model="gemini-flash-latest", contents=prompt).text
-        placeholder.markdown(f"<div class='glass-card'>{res}</div>", unsafe_allow_html=True)
-        return res
+# ==========================================
+# DETERMINISTIC CORE ENGINE
+# ==========================================
 
 @st.cache_data(ttl=1800)
-def fetch_bulk_yf(tickers, suffix, chunk_size=80):
-    yf_tickers = [f"{t}.T" if suffix == "JP" else t for t in tickers]
-    # ベンチマークも追加取得
-    bench = "SPY" if suffix == "US" else "1306.T"
-    yf_tickers.append(bench)
-    
-    frames = []
-    for i in range(0, len(yf_tickers), chunk_size):
-        chunk = yf_tickers[i:i+chunk_size]
+def fetch_data_cached(tickers_tuple, period="4mo"):
+    """
+    auto_adjust=True により分配金・分割を考慮した誠実なデータを取得。
+    threads=True で速度も確保。
+    """
+    return yf.download(
+        list(tickers_tuple), 
+        period=period, 
+        interval="1d", 
+        group_by='ticker', 
+        progress=False,
+        auto_adjust=True,
+        threads=True
+    )
+
+def zscore_series(s: pd.Series) -> pd.Series:
+    s = pd.to_numeric(s, errors="coerce")
+    if s.isna().all() or s.std(ddof=0) == 0: return pd.Series([0.0]*len(s), index=s.index)
+    return (s - s.mean()) / s.std(ddof=0)
+
+def extract_close_robust(df, expected_cols):
+    """
+    SINGLE事故を決定論的に回避。
+    expected_cols[0]（常にベンチマーク）を優先割り当てする誠実な設計。
+    """
+    close = pd.DataFrame()
+    if df is None or df.empty: return close
+
+    if isinstance(df.columns, pd.MultiIndex):
         try:
-            df = yf.download(" ".join(chunk), period="14mo", interval="1d", group_by='ticker', threads=True, progress=False, auto_adjust=True)
-            if not df.empty: frames.append(df)
-            time.sleep(0.3)
-        except: continue
-    return pd.concat(frames, axis=1) if frames else pd.DataFrame()
+            lv0 = set(df.columns.get_level_values(0))
+            lv1 = set(df.columns.get_level_values(1))
+            if "Close" in lv0: close = df.xs("Close", axis=1, level=0)
+            elif "Close" in lv1: close = df.xs("Close", axis=1, level=1)
+        except: pass
+    else:
+        # 非MultiIndex時の推測をベンチマークに固定
+        if "Close" in df.columns:
+            close = pd.DataFrame({expected_cols[0]: df["Close"]})
+        else:
+            # カラム名がそのままティッカーの場合
+            close = df[[c for c in expected_cols if c in df.columns]]
 
-def get_ticker_close(data: pd.DataFrame, ticker: str):
-    """多層Indexを考慮した終値ベクトル抽出"""
-    try:
-        if ticker in data.columns.get_level_values(0):
-            return data[ticker]['Close'].dropna()
-        if ("Close", ticker) in data.columns:
-            return data[("Close", ticker)].dropna()
-        return None
-    except: return None
+    close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
+    keep = [c for c in expected_cols if c in close.columns]
+    return close[keep]
 
-# --- 3. MASTER CATALOG (418 Assets) ---
-SECTOR_CATALOG = {
-    "US MARKET": {
-        "Platform / Mega Tech": {"AAPL":"Apple","MSFT":"MSFT","GOOGL":"Alphabet","AMZN":"Amazon","NVDA":"NVIDIA","META":"Meta","TSLA":"Tesla","NFLX":"Netflix","ADBE":"Adobe","CRM":"Salesforce","ORCL":"Oracle","IBM":"IBM"},
-        "Semis / AI Infra": {"AVGO":"Broadcom","AMD":"AMD","TSM":"TSMC","ASML":"ASML","MU":"Micron","LRCX":"Lam","AMAT":"Applied","ARM":"Arm","QCOM":"Qualcomm","VRT":"Vertiv","SMCI":"Supermicro"},
-        "Software / SaaS / Cyber": {"SNOW":"Snowflake","PLTR":"Palantir","WDAY":"Workday","PANW":"Palo Alto","CRWD":"CrowdStrike","DDOG":"Datadog","FTNT":"Fortinet","ZS":"Zscaler","OKTA":"Okta","TEAM":"Atlassian","ADSK":"Autodesk","SHOP":"Shopify","NET":"Cloudflare"},
-        "Financials": {"JPM":"JP Morgan","V":"Visa","MA":"Mastercard","BAC":"Bank of America","GS":"Goldman Sachs","MS":"Morgan Stanley","AXP":"Amex","BLK":"BlackRock","C":"Citigroup"},
-        "Healthcare / Bio": {"LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","NVO":"Novo","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","TMO":"Thermo","BMY":"Bristol","AMGN":"Amgen","ISRG":"Intuitive"},
-        "Industrials / Defense": {"LMT":"Lockheed","RTX":"Raytheon","NOC":"Northrop","GD":"GenDynamics","BA":"Boeing","GE":"GE","HON":"Honeywell","CAT":"Caterpillar","DE":"Deere","MMM":"3M"},
-        "Energy / Utilities": {"XOM":"Exxon","CVX":"Chevron","COP":"Conoco","SLB":"Schlumberger","EOG":"EOG","KMI":"KinderMorgan","MPC":"Marathon","NEE":"NextEra","DUKE":"Duke","SO":"SouthernCo"},
-        "Consumer / Media": {"HD":"HomeDepot","LOW":"Lowe's","NKE":"Nike","SBUX":"Starbucks","CMG":"Chipotle","BKNG":"Booking","MCD":"McDonald's","TGT":"Target","DIS":"Disney","PARA":"Paramount"},
-        "Materials / REITs": {"LIN":"Linde","APD":"AirProducts","SHW":"Sherwin","ECL":"Ecolab","FCX":"Freeport","PLD":"Prologis","AMT":"AmericanTower","PSA":"PublicStorage","O":"RealtyIncome"}
-    },
-    "JP MARKET": {
-        "半導体/電子部品": {"8035":"東エレク","6857":"アドバンテ","6723":"ルネサス","6146":"ディスコ","6920":"レーザー","3436":"SUMCO","7735":"スクリン","6526":"ソシオネ","6963":"ローム","7751":"キヤノン","6981":"村田製","6762":"TDK","6861":"キーエンス"},
-        "情報通信/ネット": {"9432":"NTT","9433":"KDDI","9434":"ソフトB","9984":"SBG","4755":"楽天G","3659":"ネクソン","4689":"LINEヤフー","3774":"IIJ","6098":"リクルート","4385":"メルカリ","3923":"ラクス","9613":"NTTデータ"},
-        "重工業/防衛/建機": {"7011":"三菱重工","7012":"川崎重工","7013":"IHI","6301":"小松","6367":"ダイキン","6361":"荏原","5631":"日製鋼","6273":"SMC","6305":"日立建機","6113":"アマダ","6473":"ジェイテクト","6326":"クボタ"},
-        "自動車/輸送機": {"7203":"トヨタ","7267":"ホンダ","6902":"デンソー","7201":"日産","7269":"スズキ","7272":"ヤマハ発","7261":"マツダ","7270":"SUBARU","7259":"アイシン","7205":"日野自"},
-        "金融": {"8306":"三菱UFJ","8316":"三井住友","8411":"みずほ","8766":"東京海上","8591":"オリックス","8604":"野村HD","8725":"MS&AD","8308":"りそな","7186":"コンコルディア","8630":"SOMPO"},
-        "総合商社/エネルギー": {"8058":"三菱商事","8001":"伊藤忠","8031":"三井物産","8053":"住友商事","8015":"豊田通商","8002":"丸紅","2768":"双日","1605":"INPEX","5020":"ENEOS","1518":"三井松島"},
-        "必需品/医薬/化学": {"2802":"味の素","2914":"JT","2502":"アサヒ","2503":"キリン","2501":"サッポロ","4452":"花王","2269":"明治HD","2801":"キッコーマン","4911":"資生堂","4901":"富士フイルム","4502":"武田薬品","4568":"第一三共"},
-        "不動産/鉄道/電力": {"8801":"三井不動","8802":"三菱地所","8830":"住友不動","3289":"東急不動","1801":"大成建設","1812":"鹿島建設","1803":"清水建設","1802":"大林組","1928":"積水ハウス","1925":"大和ハウス","9022":"JR東海","9020":"JR東日本","9101":"日本郵船","9104":"商船三井","9501":"東京電力","9503":"関西電力"}
+def calculate_integrity(expected_list, close_df, win_days):
+    present = [t for t in expected_list if t in close_df.columns]
+    if not present:
+        return {"present":0,"computable":0,"synced":0,"expected":len(expected_list),
+                "most_common_date":None, "computable_list":[]}
+
+    last_dates = close_df[present].apply(lambda x: x.last_valid_index())
+    most_common_date = last_dates.mode().iloc[0] if not last_dates.mode().empty else None
+    synced_mask = (last_dates == most_common_date)
+    
+    computable_list = []
+    for t in present:
+        tail = close_df[t].tail(win_days + 1)
+        if tail.notna().sum() >= (win_days + 1) and bool(synced_mask.get(t, False)):
+            computable_list.append(t)
+
+    return {
+        "present": len(present), "computable": len(computable_list),
+        "synced": int(synced_mask.sum()), "expected": len(expected_list),
+        "most_common_date": most_common_date, "computable_list": computable_list
     }
+
+def kpi_card(label, value, status_cls):
+    st.markdown(f'<div class="stMetric {status_cls}"><div style="font-size:12px;color:#8b949e">{label}</div>'
+                f'<div style="font-size:18px;font-weight:700;color:#e6edf3">{value}</div></div>', unsafe_allow_html=True)
+
+# ==========================================
+# MAIN COMMAND CENTER
+# ==========================================
+UNIVERSES = {
+    "US Sectors": {"bench": "SPY", "tickers": ["XLK", "XLV", "XLF", "XLY", "XLP", "XLI", "XLE", "XLB", "XLU", "XLRE"]},
+    "JP Industry": {"bench": "1306.T", "tickers": ["1617.T", "1618.T", "1619.T", "1620.T", "1621.T", "1622.T", "1623.T", "1624.T"]}
 }
 
-# --- 4. CONTROL CENTER FLOW ---
+def main():
+    st.title("🛰️ Sentinel Prime v26.3.4")
 
-if 'bulk_data' not in st.session_state: st.session_state.bulk_data = None
-if 'market' not in st.session_state: st.session_state.market = "US MARKET"
-if 'sector' not in st.session_state: st.session_state.sector = None
+    # Command Deck
+    with st.container():
+        st.markdown('<div class="command-deck">', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1: market = st.selectbox("Market Universe", list(UNIVERSES.keys()))
+        with c2: lookback = st.selectbox("Analysis Window", ["1W (5d)", "1M (21d)", "3M (63d)"], index=1)
+        with c3:
+            st.write("")
+            sync_btn = st.button("SYNC ENGINE", use_container_width=True, type="primary")
+        
+        # 最終同期時刻の表示
+        if 'last_sync_ts' in st.session_state:
+            st.caption(f"Last Sync: {st.session_state.last_sync_ts}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-st.title("ALPHALENS v24.0 // OMNI-CONTROL")
-
-# Header KPI (Transparency)
-market = st.session_state.market
-suffix = "US" if "US" in market else "JP"
-all_tickers = []
-for gs in SECTOR_CATALOG[market].values(): all_tickers.extend(list(gs.keys()))
-
-st.markdown(f"""
-<div class="header-kpi">
-    <div class="kpi-box"><div class="kpi-label">Market Cluster</div><div class="kpi-val">{market.split()[0]}</div></div>
-    <div class="kpi-box"><div class="kpi-label">Control Target</div><div class="kpi-val">{len(all_tickers)} Assets</div></div>
-    <div class="kpi-box"><div class="kpi-label">Bench</div><div class="kpi-val">{'SPY' if suffix=='US' else 'TOPIX'}</div></div>
-</div>
-""", unsafe_allow_html=True)
-
-# 5. COMMAND BAR: SYNC & WINDOW
-c_cmd1, c_cmd2, c_cmd3 = st.columns([1,1,2])
-with c_cmd1:
-    if st.button("🇺🇸 SET US", use_container_width=True): 
-        st.session_state.market = "US MARKET"; st.session_state.sector = None; st.rerun()
-with c_cmd2:
-    if st.button("🇯🇵 SET JP", use_container_width=True): 
-        st.session_state.market = "JP MARKET"; st.session_state.sector = None; st.rerun()
-with c_cmd3:
-    window_ui = st.radio("ANALYSIS WINDOW", ["1W", "1M", "3M"], index=1, horizontal=True, label_visibility="collapsed")
-    win_days = {"1W": 5, "1M": 21, "3M": 63}[window_ui]
-
-st.markdown("<div class='sync-btn'>", unsafe_allow_html=True)
-if st.button("🔄 SYNC QUANTUM DATA (ALL CONSTITUENTS)"):
-    with st.status("Establishing Multi-Packet Connection...", expanded=True) as status:
-        st.session_state.bulk_data = fetch_bulk_yf(tuple(sorted(set(all_tickers))), suffix)
-        status.update(label="Sync Successful", state="complete", expanded=False)
-st.markdown("</div>", unsafe_allow_html=True)
-
-if st.session_state.bulk_data is None:
-    st.info("Please press [SYNC DATA] to initiate the管制塔.")
-    st.stop()
-
-# 6. PULSE ENGINE (TRUE VECTOR CALC)
-data = st.session_state.bulk_data
-# Extract Close Matrix (Vectorization)
-if "Close" in data.columns.get_level_values(0):
-    close_matrix = data["Close"].copy()
-else:
-    # 銘柄数が少ない場合のフォールバック
-    close_matrix = pd.DataFrame({t: get_ticker_close(data, t) for t in data.columns.get_level_values(0).unique()})
-
-# Calculate Benchmark Return
-bench_t = "SPY" if suffix == "US" else "1306.T"
-bench_px = get_ticker_close(data, bench_t)
-bench_ret = calc_ret(bench_px, win_days) if bench_px is not None else 0.0
-
-pulse_rows = []
-missing = set()
-for g_name, tickers in SECTOR_CATALOG[market].items():
-    rets = []
-    for t in tickers.keys():
-        t_key = f"{t}.T" if suffix == "JP" else t
-        if t_key in close_matrix.columns:
-            r = calc_ret(close_matrix[t_key], win_days)
-            if r is not None: rets.append(r)
-            else: missing.add(t)
-        else: missing.add(t)
-    if rets:
-        avg = sum(rets)/len(rets)
-        pulse_rows.append({"Sector": g_name, "Return": avg, "Excess": avg - bench_ret, "N": len(rets)})
-
-pulse_df = pd.DataFrame(pulse_rows).sort_values("Excess", ascending=False)
-
-# 7. SECTOR PULSE (RS FIXED)
-st.write(f"### 🔥 SECTOR RELATIVE STRENGTH (vs Bench: {bench_ret:+.2f}%)")
-fig = px.bar(pulse_df, x="Excess", y="Sector", orientation='h', color="Excess", color_continuous_scale="RdYlGn", hover_data=["Return", "N"])
-st.plotly_chart(fig.update_layout(height=400, template="plotly_dark", margin=dict(l=0,r=0,t=0,b=0)), use_container_width=True)
-
-if st.button("🧠 GENERATE MACRO INTELLIGENCE (AI Stream)"):
-    ai_c = st.empty()
-    stream_ai_response(f"{market}市場のセクター状況(Bench対比)から地合いと戦略を日本語1000文字で。Data: {pulse_df.to_json()}", ai_c)
-
-# 8. SECTOR CHIPS
-st.write("### 📂 ACTIVATE SECTOR DATA-SET")
-chips = pulse_df["Sector"].tolist()[:9]
-s_cols = st.columns(3)
-for i, s_name in enumerate(chips):
-    if s_cols[i%3].button(f"💠 {s_name}"): st.session_state.sector = s_name
-
-st.divider()
-
-# 9. SECTOR DRILL DOWN
-if st.session_state.sector:
-    sel_sec = st.session_state.sector
-    st.subheader(f"📍 {sel_sec} UNIVERSE")
+    win_days = int(lookback.split("(")[1].replace("d)", ""))
+    u_cfg = UNIVERSES[market]
     
-    if st.button(f"▶︎ GENERATE {sel_sec} CONTEXT (AI)"):
-        ai_sec_c = st.empty()
-        stream_ai_response(f"{sel_sec}セクターの最新状況をマクロ、需給、地政学含め日本語500文字で分析。挨拶不要。", ai_sec_c)
+    # 決定論的な順序固定：ベンチマークを常に先頭へ
+    bench_t = u_cfg["bench"]
+    tickers_raw = u_cfg["tickers"]
+    all_t = [bench_t] + [t for t in tickers_raw if t != bench_t]
 
-    # Matrix Table (Instant)
-    target_map = SECTOR_CATALOG[market][sel_sec]
-    results = []
-    for t, n in target_map.items():
-        t_key = f"{t}.T" if suffix == "JP" else t
-        if t_key in close_matrix.columns:
-            px_series = close_matrix[t_key].dropna()
-            ret = calc_ret(px_series, win_days)
-            results.append({"Name":n,"Ticker":t,"Price":px_series.iloc[-1],"Return":ret,"df":px_series})
-    
-    if results:
-        df_disp = pd.DataFrame(results).drop(columns=['df']).sort_values("Return", ascending=False)
-        df_disp["Return"] = df_disp["Return"].map(lambda x: f"{x:+.1f}%" if x is not None else "N/A")
-        st.dataframe(df_disp.set_index("Name"), use_container_width=True)
+    if sync_btn or 'close_df' not in st.session_state or st.session_state.get('last_market') != market:
+        with st.status("Engaging Data Stream...", expanded=False):
+            raw_data = fetch_data_cached(tuple(all_t)) # 順序固定によりキャッシュキーが安定
+            st.session_state.close_df = extract_close_robust(raw_data, all_t)
+            st.session_state.last_market = market
+            st.session_state.last_sync_ts = datetime.now().strftime("%H:%M:%S")
 
-    # 10. RANKING (Consistent Logic)
-    if st.button(f"🔍 EXECUTE {sel_sec} DEEP QUANT RANKING"):
-        with st.status("Aligning Evaluation Factors...", expanded=True) as status:
-            scored = []
-            for r in results:
-                c = r["df"]
-                # Dynamic Momentum aligned with window
-                if window_ui == "1W": mom = (calc_ret(c, 21) or 0) - (r['Return'] or 0)
-                elif window_ui == "1M": mom = (calc_ret(c, 63) or 0) - (r['Return'] or 0)
-                else: mom = (calc_ret(c, 252) or 0) - (r['Return'] or 0)
-                
-                score = round(mom*0.5 + (r['Return'] or 0)*0.5, 2)
-                scored.append({"Name":r['Name'], "Score":score, "Mom_Factor":mom, f"Ret_{window_ui}":r['Return']})
+    if 'close_df' in st.session_state:
+        audit = calculate_integrity(all_t, st.session_state.close_df, win_days)
+        
+        # --- AUDIT PANEL ---
+        st.subheader("🛡️ Integrity Audit")
+        exp = audit["expected"]
+        def get_cls(v, e): return "status-green" if v/e >= 0.9 else "status-yellow" if v/e >= 0.7 else "status-red"
+        
+        a1, a2, a3, a4 = st.columns(4)
+        with a1: kpi_card("Present", f"{audit['present']}/{exp}", get_cls(audit['present'], exp))
+        with a2: kpi_card("Computable", f"{audit['computable']}/{exp}", get_cls(audit['computable'], exp))
+        with a3: kpi_card("Synced", f"{audit['synced']}/{exp}", get_cls(audit['synced'], exp))
+        with a4: kpi_card("Last Date", str(audit['most_common_date']).split()[0] if audit['most_common_date'] else "N/A", "status-green")
+
+        # 3段階ヘルス証明
+        health_ratio = audit['computable'] / exp
+        if health_ratio >= 0.9: status_msg, status_cls = "[PASSED]", "cert-passed"
+        elif health_ratio >= 0.7: status_msg, status_cls = "[DEGRADED]", "cert-degraded"
+        else: status_msg, status_cls = "[FAILED]", "cert-failed"
+        
+        st.markdown(f'<div class="audit-cert {status_cls}">{status_msg} Bench:{bench_t} | Health:{health_ratio:.1%} | Synced:{audit["synced"]}</div>', unsafe_allow_html=True)
+
+        # --- ANALYSIS ---
+        if bench_t not in audit["computable_list"]:
+            st.error(f"❌ Critical Failure: Benchmark ({bench_t}) is unreliable for this window.")
+            st.stop()
+
+        close_df = st.session_state.close_df
+        b_series = close_df[bench_t].tail(win_days + 1)
+        b_ret = (b_series.iloc[-1] / b_series.iloc[0] - 1) * 100
+        
+        results = []
+        valid_tickers = [t for t in tickers_raw if t in audit['computable_list'] and t != bench_t]
+        
+        for t in valid_tickers:
+            s = close_df[t].tail(win_days + 1)
+            p_ret = (s.iloc[-1] / s.iloc[0] - 1) * 100
             
-            ranked = sorted(scored, key=lambda x: x['Score'], reverse=True)
-            st.write("### 📈 ALPHA RANKING")
-            st.dataframe(pd.DataFrame(ranked).set_index("Name"), use_container_width=True)
+            # Acceleration
+            half = max(1, win_days // 2)
+            p_half = (s.iloc[-1] / s.iloc[-(half+1)] - 1) * 100
             
-            ai_r_c = st.empty()
-            stream_ai_response(f"Quant Analystとして格付け結果から投資推奨理由とリスクを日本語分析。Data: {json.dumps(ranked[:5], ensure_ascii=False)}", ai_r_c)
-            status.update(label="Ranking Complete", state="complete")
+            # 堅牢なStable判定
+            s6 = close_df[t].tail(6).dropna()
+            b6 = close_df[bench_t].tail(6).dropna()
+            if len(s6) < 6 or len(b6) < 6:
+                stable = "?"
+            else:
+                rs_short = ((s6.iloc[-1]/s6.iloc[0]-1)*100) - ((b6.iloc[-1]/b6.iloc[0]-1)*100)
+                stable = "✅" if np.sign(p_ret - b_ret) == np.sign(rs_short) else "⚠️"
+            
+            results.append({
+                'Ticker': t, 
+                'RS': p_ret - b_ret, 
+                'Accel': p_half - (p_ret / 2),
+                'MaxDD': abs(((s / s.cummax() - 1) * 100).min()),
+                'Stable': stable
+            })
+        
+        if results:
+            res_df = pd.DataFrame(results)
+            res_df['RS_z'], res_df['Accel_z'], res_df['DD_z'] = zscore_series(res_df['RS']), zscore_series(res_df['Accel']), zscore_series(res_df['MaxDD'])
+            res_df['ApexScore'] = (0.6 * res_df['RS_z']) + (0.25 * res_df['Accel_z']) - (0.15 * res_df['DD_z'])
+            res_df = res_df.sort_values('ApexScore', ascending=False)
+
+            # --- STRATEGIC ACTIONS ---
+            st.markdown("---")
+            st.subheader("🎯 Tactical Priority")
+            for i, (_, row) in enumerate(res_df.head(3).iterrows()):
+                st.markdown(f"""<div class="next-action-card">
+                    <small>Rank #{i+1} | Score: {row['ApexScore']:.2f}</small><br>
+                    <b style="font-size:20px;">{row['Ticker']}</b> {row['Stable']}<br>
+                    <span style="color:#8b949e;">{"高モメンタム + 低ドローダウン" if row['RS_z'] > 0 and row['DD_z'] < 0 else "トレンド優位"}</span></div>""", unsafe_allow_html=True)
+
+            t1, t2 = st.tabs(["📊 Leaderboard", "📈 Mean Correlation"])
+            with t1:
+                st.dataframe(res_df[['Ticker', 'ApexScore', 'RS', 'Accel', 'MaxDD', 'Stable']].style.background_gradient(subset=['ApexScore', 'RS'], cmap='RdYlGn')
+                             .format({'ApexScore': '{:.2f}', 'RS': '{:.2f}%', 'Accel': '{:.2f}%', 'MaxDD': '{:.2f}%'}), use_container_width=True)
+            with t2:
+                rets = close_df[valid_tickers].pct_change().tail(win_days)
+                corr = rets.corr()
+                np.fill_diagonal(corr.values, np.nan)
+                st.plotly_chart(px.bar(corr.mean(skipna=True), title="Mean Correlation (Diagonal Excluded)"), use_container_width=True)
+
+if __name__ == "__main__":
+    main()
