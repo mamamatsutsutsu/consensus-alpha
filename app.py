@@ -44,7 +44,10 @@ if "last_market_key" not in st.session_state: st.session_state.last_market_key =
 
 def log_system_event(msg: str, level: str = "INFO"):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"[{timestamp}] [{level}] {msg}")
+    line = f"[{timestamp}] [{level}] {msg}"
+    print(line)
+    st.session_state.system_logs.append(line)
+    st.session_state.system_logs = st.session_state.system_logs[-300:]
 
 def error_boundary(func):
     def wrapper(*args, **kwargs):
@@ -57,104 +60,104 @@ def error_boundary(func):
     return wrapper
 
 # ==========================================
-# 1. UI STYLING (High-End Professional)
+# 1. UI STYLING (SYSTEM LOGS FIRST)
 # ==========================================
 st.markdown("""
 <style>
-/* FONT IMPORT */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Roboto+Mono:wght@400;700&family=Noto+Sans+JP:wght@300;400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&family=Orbitron:wght@900&family=Noto+Sans+JP:wght@400;700&display=swap');
 
 :root {
   --bg: #000000;
   --panel: #0a0a0a;
-  --card: #141414;
+  --card: #111111;
   --border: #333333;
   --accent: #00f2fe;     /* Cyan */
   --accent-2: #ff0055;   /* Pink */
-  --accent-3: #00ff88;   /* Green */
   --text: #e0e0e0;
 }
 
-html, body, .stApp { background-color: var(--bg) !important; color: var(--text) !important; }
-* { font-family: 'Noto Sans JP', sans-serif !important; letter-spacing: 0.02em !important; } /* Tighter body text */
-h1, h2, h3, .brand, .kpi-val, .agent-label, div[data-testid="stMetricValue"] { 
-    font-family: 'Orbitron', sans-serif !important; letter-spacing: 0.05em !important; /* Wider headers */
+/* GLOBAL FONT: ROBOTO MONO (SYSTEM LOGS STYLE) */
+html, body, .stApp { 
+  background-color: var(--bg) !important; 
+  color: var(--text) !important; 
+  font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Noto Sans JP", monospace !important;
+}
+
+/* Force Monospace everywhere except Brand */
+* { 
+  font-family: inherit !important; 
+  letter-spacing: 0.02em !important; 
+}
+
+/* BRAND ONLY: Orbitron */
+.brand { 
+  font-family: 'Orbitron', sans-serif !important; 
+  letter-spacing: 0.08em !important; 
+}
+
+/* HEADERS */
+h1, h2, h3, .kpi-val, .agent-label, div[data-testid="stMetricValue"] { 
+  font-family: inherit !important; 
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase;
 }
 
 /* HIDE DEFAULTS */
 #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
 
-/* BRANDING */
-h1, h2, h3, .brand {
-  background: linear-gradient(90deg, #fff, #00f2fe);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-weight: 900 !important;
-  text-transform: uppercase;
-  padding-bottom: 10px;
-}
-
 /* CONTAINERS */
-.deck { background: var(--panel); border-bottom: 1px solid var(--accent); padding: 20px; margin-bottom: 25px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 15px; } /* Slight rounded corners */
+.deck { background: var(--panel); border-bottom: 1px solid var(--accent); padding: 15px; margin-bottom: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 0px; padding: 20px; margin-bottom: 15px; }
 
-/* TABLE CUSTOMIZATION */
-div[data-testid="stDataFrame"] { background-color: #111 !important; border: 1px solid #444 !important; }
-div[data-testid="stDataFrame"] * { color: #f0f0f0 !important; font-family: 'Roboto Mono', monospace !important; font-size: 12px !important; }
-[data-testid="stHeader"] { background-color: #1a1a1a !important; border-bottom: 2px solid var(--accent) !important; }
+/* TABLE */
+div[data-testid="stDataFrame"] { background-color: #050505 !important; border: 1px solid #444 !important; }
+div[data-testid="stDataFrame"] * { color: #f0f0f0 !important; font-size: 11px !important; }
+[data-testid="stHeader"] { background-color: #151515 !important; border-bottom: 2px solid var(--accent) !important; }
 
-/* INPUTS */
+/* INPUTS & BUTTONS */
 div[data-baseweb="select"] > div { background-color: #111 !important; border-color: #555 !important; color: #fff !important; }
 div[data-baseweb="popover"], div[data-baseweb="menu"] { background-color: #111 !important; border: 1px solid #555 !important; }
-div[data-baseweb="option"] { color: #fff !important; }
-li[data-baseweb="option"]:hover { background-color: #333 !important; color: #00f2fe !important; }
-
-/* BUTTONS */
 button {
   background-color: #111 !important; color: var(--accent) !important;
-  border: 1px solid #444 !important; border-radius: 2px !important;
-  font-family: 'Orbitron' !important; font-weight: 700 !important; text-transform: uppercase;
-  transition: all 0.2s ease-in-out;
+  border: 1px solid #444 !important; border-radius: 0px !important;
+  font-weight: 700 !important; 
 }
-button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px rgba(0, 242, 254, 0.4) !important; color: #fff !important; }
+button:hover { border-color: var(--accent) !important; box-shadow: 0 0 10px rgba(0, 242, 254, 0.4) !important; color: #fff !important; }
 
 /* AGENT COUNCIL */
 .agent-row {
     display: flex; align-items: flex-start; 
-    margin-bottom: 12px; padding: 12px 16px;
-    background: #0d0d0d; border-left: 3px solid #555;
-    font-size: 13px; line-height: 1.7;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    margin-bottom: 8px; padding: 10px;
+    border-radius: 0px; background: #080808; border-left: 3px solid #555;
+    font-size: 12px; line-height: 1.6;
 }
-.agent-label { 
-    font-weight: 900; margin-right: 15px; white-space: nowrap; 
-    min-width: 120px; text-align: right; opacity: 0.9;
-}
+.agent-label { font-weight: 700; margin-right: 15px; white-space: nowrap; min-width: 130px; text-align: right; }
 .agent-fundamental { border-left-color: #00f2fe; } .agent-fundamental .agent-label { color: #00f2fe; }
 .agent-sentiment { border-left-color: #ff0055; } .agent-sentiment .agent-label { color: #ff0055; }
 .agent-valuation { border-left-color: #00ff88; } .agent-valuation .agent-label { color: #00ff88; }
 .agent-skeptic { border-left-color: #ffcc00; } .agent-skeptic .agent-label { color: #ffcc00; }
 .agent-risk { border-left-color: #888; } .agent-risk .agent-label { color: #888; }
 .agent-verdict { 
-    border: 1px solid #444; background: #151515; padding: 25px; 
-    margin-top: 20px; font-weight: 500; font-size: 14px; line-height: 1.9;
-    border-left: 5px solid #fff;
+    border: 1px solid #fff; background: #111; padding: 20px; 
+    margin-top: 15px; font-weight: 500; font-size: 13px; line-height: 1.8;
+}
+.agent-outlook {
+    border: 1px solid #00f2fe; background: rgba(0, 242, 254, 0.05); padding: 15px;
+    margin-bottom: 10px; font-weight: bold; color: #fff; border-left: 5px solid #00f2fe;
 }
 
-/* BOXES */
+/* MARKET & REPORT */
 .market-box {
-    background: #080808; border: 1px solid #333; padding: 25px;
-    margin-bottom: 25px; font-size: 14px; line-height: 1.8; color: #ddd;
-    border-radius: 4px;
+    background: #080808; border: 1px solid #333; padding: 20px;
+    margin-bottom: 20px; font-size: 12px; line-height: 1.8; color: #ddd;
 }
 .report-box {
-    background: #111; border-top: 3px solid var(--accent);
-    padding: 30px; margin-top: 15px; line-height: 2.0; color: #eee; font-size: 14px;
-    white-space: pre-wrap; letter-spacing: 0.05em;
+    background: #0a0a0a; border-top: 2px solid var(--accent);
+    padding: 20px; margin-top: 10px; line-height: 1.8; color: #eee; font-size: 12px;
+    white-space: pre-wrap; 
 }
-.highlight { color: #00f2fe; font-weight: bold; text-shadow: 0 0 5px rgba(0,242,254,0.3); }
-.highlight-neg { color: #ff0055; font-weight: bold; text-shadow: 0 0 5px rgba(255,0,85,0.3); }
-.caption-text { font-size: 11px; color: #777; margin-top: 5px; }
+.highlight { color: #00f2fe; font-weight: bold; } .highlight-neg { color: #ff0055; font-weight: bold; }
+.caption-text { font-size: 11px; color: #777; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -175,7 +178,7 @@ def check_access():
     if st.session_state.user_access_granted: return True
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown("<br><br><h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
         with st.form("access_form"):
             p = st.text_input("PASSCODE", type="password")
             if st.form_submit_button("UNLOCK", use_container_width=True):
@@ -195,11 +198,36 @@ FETCH_PERIOD = "24mo"
 MARKETS = universe.MARKETS
 NAME_DB = universe.NAME_DB
 
-def get_name(t: str) -> str: return NAME_DB.get(t, t)
+@st.cache_data(ttl=86400)
+def fetch_name_fallback(ticker: str) -> str:
+    try:
+        info = yf.Ticker(ticker).info
+        n = info.get("shortName") or info.get("longName")
+        if n and isinstance(n, str) and len(n) >= 2: return n
+    except: pass
+    return ticker
+
+def get_name(t: str) -> str:
+    n = NAME_DB.get(t)
+    if n and n != t: return n
+    return fetch_name_fallback(t)
 
 def sfloat(x):
     try: return float(x)
     except: return np.nan
+
+def clamp(x, lo, hi):
+    return lo if x < lo else hi if x > hi else x
+
+def sentiment_label(score: int) -> str:
+    if score >= 3: return "POSITIVE"
+    if score <= -3: return "NEGATIVE"
+    return "NEUTRAL"
+
+def dash(x, fmt="%.1f"):
+    if pd.isna(x): return "-"
+    try: return fmt % float(x)
+    except: return "-"
 
 # ==========================================
 # 4. CORE ENGINES
@@ -279,7 +307,6 @@ def calculate_zscore(s: pd.Series) -> pd.Series:
 def get_fundamental_data(ticker: str) -> Dict[str, Any]:
     try:
         info = yf.Ticker(ticker).info or {}
-        # Negative filter for Pro view
         pe = info.get("trailingPE", np.nan)
         if isinstance(pe, (int, float)) and pe < 0: pe = np.nan
         pbr = info.get("priceToBook", np.nan)
@@ -308,7 +335,10 @@ def fetch_fundamentals_batch(tickers: List[str]) -> pd.DataFrame:
             pe = pe if pe > 0 else np.nan
             pbr = i.get("priceToBook", np.nan)
             pbr = pbr if pbr > 0 else np.nan
-            return {"Ticker": t, "MCap": i.get("marketCap", 0), "PER": pe, "PBR": pbr, "FwdPE": i.get("forwardPE", np.nan)}
+            return {
+                "Ticker": t, "MCap": i.get("marketCap", 0),
+                "PER": pe, "PBR": pbr, "FwdPE": i.get("forwardPE", np.nan),
+            }
         except: return {"Ticker": t, "MCap": 0}
     
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -318,32 +348,32 @@ def fetch_fundamentals_batch(tickers: List[str]) -> pd.DataFrame:
 # --- TEXT PROCESSING ---
 def clean_ai_text(text: str) -> str:
     text = text.replace("**", "").replace('"', "")
-    text = re.sub(r"(?m)^\s*#{2,}\s*", "", text) # Remove MD headers at line start
+    text = re.sub(r"(?m)^\s*#{2,}\s*", "", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
 
-def force_nonempty_outlook(text: str, trend: str, ret: float, spread: float) -> str:
+def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: float) -> str:
     m = re.search(r"【今後3ヶ月[^】]*】\n?(.*)", text, flags=re.DOTALL)
     body = m.group(1).strip() if m else ""
-    
-    # Check if empty (less than 12 chars)
-    if len(re.sub(r"[\s\(\)・\-−]", "", body)) >= 12:
-        return text 
+    if len(re.sub(r"[\s\(\)・\-−\n]", "", body)) >= 30: return text
 
-    # Fallback Content
     fallback = (
-        f"【今後3ヶ月のコンセンサス見通し】\n"
-        f"金利動向と中銀スタンスが焦点。景気は雇用の底堅さが下支えする一方、インフレ粘着性がリスク要因。\n"
-        f"決算ガイダンスと自社株買いが需給の下支えとなり、悪材料織り込み済みの銘柄には押し目買いが入りやすい。\n"
-        f"現在の基調は{trend}であり、市場リターン{ret:.1f}%とスプレッド{spread:.1f}ptを考慮すると、選別色が強まる公算が大きい。"
+        "【今後3ヶ月のコンセンサス見通し】\n"
+        "・主要イベント：米CPI/雇用統計→金利織り込みの再計算で高PER領域が振れやすい\n"
+        "・FOMC/中銀発言→タカ派サプライズはグロース逆風、ハト派はリスク選好に寄与\n"
+        "・主要企業決算→ガイダンス上振れは強者集中を強化、下振れはリーダー銘柄から調整\n"
+        "・指数リバランス/期末要因→需給の歪みで短期スパイクが出やすい\n"
+        f"強気条件：インフレ鈍化＋ガイダンス上振れが連鎖（基調：{trend}）\n"
+        "弱気条件：金利上振れ＋決算の下方修正が波及"
     )
-    
-    text = re.sub(r"【今後3ヶ月[^】]*】.*", fallback, text, flags=re.DOTALL)
-    if "【今後3ヶ月" not in text: text += "\n" + fallback
+    if "【今後3ヶ月" in text:
+        text = re.sub(r"【今後3ヶ月[^】]*】.*", fallback, text, flags=re.DOTALL)
+    else:
+        text = text.rstrip() + "\n" + fallback
     return text
 
 def enforce_market_format(text: str) -> str:
     if "【主な変動要因】" not in text: text += "\n【主な変動要因】\n(+ )\n(- )"
-    text = re.sub(r"\n\s*\n(【主な変動要因】)", r"\n\1", text) # Ensure single newline before header
+    text = re.sub(r"\n\s*\n(【主な変動要因】)", r"\n\1", text)
     text = re.sub(r"(。)(【主な変動要因】)", r"\1\n\2", text)
     if "【今後3ヶ月" not in text: text += "\n【今後3ヶ月のコンセンサス見通し】\n( )"
     text = re.sub(r"\n\s*\n(【今後3ヶ月[^】]*】)", r"\n\1", text)
@@ -355,7 +385,7 @@ def market_to_html(text: str) -> str:
     return text.replace("\n", "<br>")
 
 @st.cache_data(ttl=1800)
-def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple[List[dict], str]:
+def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple[List[dict], str, int]:
     news_items, context_lines = [], []
     pos_words = ["増益", "最高値", "好感", "上昇", "自社株買い", "上方修正", "急騰", "beat", "high"]
     neg_words = ["減益", "安値", "嫌気", "下落", "下方修正", "急落", "赤字", "miss", "low"]
@@ -388,9 +418,7 @@ def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple
     except: pass
 
     news_items.sort(key=lambda x: x["pub"], reverse=True)
-    sent_label = "Positive" if sentiment_score > 2 else "Negative" if sentiment_score < -2 else "Neutral"
-    full_context = f"News Sentiment: {sent_label} (Score: {sentiment_score})\n" + "\n".join(context_lines[:15])
-    return news_items, full_context
+    return news_items, "\n".join(context_lines[:15]), sentiment_score
 
 @st.cache_data(ttl=3600)
 def generate_ai_content(prompt_key: str, context: Dict) -> str:
@@ -409,9 +437,10 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         この期間の市場概況をプロ向けに450-600字で解説せよ。
         「ベンチマーク」禁止。「市場平均」を使用。
         段落間の空行禁止。改行は許可するが連続改行禁止。
-        1) 市場概況（因果と数値を結びつける）
-        2) 【主な変動要因】（箇条書き。行頭に必ず(+)/(-)を付記）
-        3) 【今後3ヶ月のコンセンサス見通し】（金利・景気・需給の観点から必ず記述。空白禁止）
+        必ず次の順番で出力せよ（見出しは固定）：
+        1) 市場概況（材料→結果を因果で、数値必須）
+        2) 【主な変動要因】（3〜6行、各行は必ず(+)または(-)で開始）
+        3) 【今後3ヶ月のコンセンサス見通し】（90日以内の具体イベント/予定を最大6つ列挙。各行は「イベント名→株価への方向→理由」）
         """
     elif prompt_key == "sector_debate":
         p = f"""
@@ -422,24 +451,23 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         ニュース（非構造）:
         {context.get('news','')}
 
-        制約:
-        - 文体は「だ・である」で統一
-        - 「不明」「わからない」禁止。欠損は省略
-        - 挨拶、自己紹介、宣言禁止。即本文へ
-        - 各エージェント末尾に「今後3ヶ月」段落必須
-
-        構成:
-        1) 冒頭に「セクター全体の今後3ヶ月見通し」を2〜4文（宣言禁止）
-        2) 5エージェント議論
-        3) JUDGE
-
+        タスク:
+        1. まず冒頭に[SECTOR_OUTLOOK]タグで、セクター全体の見通し（3ヶ月）を宣言抜きで記述。
+        2. その後、各エージェントが「推奨銘柄（ロング）」と「回避銘柄（ショート）」を議論。
+        各エージェントは冒頭でまずセクター見通しを1文述べること。
+        
+        [JUDGE]では、トップピック1銘柄と次点2銘柄を決定し、その論理的根拠を詳細（従来の5倍の分量）に記述せよ。
+        「なぜその銘柄なのか」を定量データ（RS, PER, 成長性）を用いて比較・説得すること。
+        ネガティブな銘柄があれば具体的に指摘せよ。
+        
         出力フォーマット（タグ厳守）:
+        [SECTOR_OUTLOOK] ...
         [FUNDAMENTAL] ...
         [SENTIMENT] ...
         [VALUATION] ...
         [SKEPTIC] ...
         [RISK] ...
-        [JUDGE] （トップ1、次点2、回避1を明確に。理由は定量→非構造ニュース→3ヶ月見通しの順）
+        [JUDGE] ...
         """
     elif prompt_key == "stock_report":
         p = f"""
@@ -449,12 +477,13 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         ニュース:{context['news']}
         
         プロのアナリストレポートを作成せよ。文体は「だ・である」。
-        記号(「**」や「""」)禁止。
+        記号(「**」や「""」)は使用禁止。
+        「不明」「わからない」という言葉は禁止。データがない場合はその項目を黙ってスキップせよ。
         
         1. 企業概要
-        2. 定量・バリュエーション（市場平均・セクター平均比較と再評価余地）
-        3. 需給・センチメント（直近リターンから逆回転条件）
-        4. ニュース（事象→業績影響→3ヶ月ドライバー）
+        2. 定量・バリュエーション評価（市場平均・セクター平均と比較して割安か？再評価余地は？）
+        3. 需給/センチメント
+        4. ニュース/非構造情報（事象→業績への含意）
         5. 3ヶ月見通し（ベース/強気/弱気シナリオ）
         6. 監視ポイント（決算・金利・為替等）
         """
@@ -470,6 +499,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
 
 def parse_agent_debate(text: str) -> str:
     mapping = {
+        "[SECTOR_OUTLOOK]": ("agent-verdict", "SECTOR OUTLOOK"),
         "[FUNDAMENTAL]": ("agent-fundamental", "FUNDAMENTAL"),
         "[SENTIMENT]": ("agent-sentiment", "SENTIMENT"),
         "[VALUATION]": ("agent-valuation", "VALUATION"),
@@ -478,25 +508,28 @@ def parse_agent_debate(text: str) -> str:
         "[JUDGE]": ("agent-verdict", "JUDGE")
     }
     clean = clean_ai_text(text.replace("```html", "").replace("```", ""))
-    parts = re.split(r'(\[[A-Z]+\])', clean)
+    parts = re.split(r'(\[[A-Z_]+\])', clean)
     html = ""
     curr_cls, label, buffer = "agent-box", "", ""
     
-    def flush():
-        nonlocal html, buffer, curr_cls, label
-        if curr_cls and label and buffer.strip():
-            b = re.sub(r"\s*\n+\s*", " ", buffer).strip()
-            html += f"<div class='agent-row {curr_cls}'><div class='agent-label'>{label}</div><div>{b}</div></div>"
-        buffer = ""
-
     for part in parts:
         if part in mapping:
-            flush()
+            if buffer:
+                # Flush previous
+                if "SECTOR OUTLOOK" in label:
+                    html += f"<div class='{curr_cls}' style='border-left:5px solid #00f2fe; margin-bottom:15px;'><b>{label}</b><br>{buffer}</div>"
+                else:
+                    html += f"<div class='agent-row {curr_cls}'><div class='agent-label'>{label}</div><div>{buffer}</div></div>"
             curr_cls, label = mapping[part]
-        else: buffer += (" " + part)
-            
-    flush()
-    if not html: html = f"<div class='agent-box'>{clean}</div>"
+            buffer = ""
+        else: buffer += part
+    
+    # Flush last
+    if buffer:
+        if "SECTOR OUTLOOK" in label:
+            html += f"<div class='{curr_cls}' style='border-left:5px solid #00f2fe; margin-bottom:15px;'><b>{label}</b><br>{buffer}</div>"
+        else:
+            html += f"<div class='agent-row {curr_cls}'><div class='agent-label'>{label if 'label' in locals() else ''}</div><div>{buffer}</div></div>"
     return html
 
 # ==========================================
@@ -509,6 +542,11 @@ def main():
     with st.sidebar:
         st.markdown("### SYSTEM LOGS")
         if st.button("CLEAR LOGS"): st.session_state.system_logs = []; st.rerun()
+        if st.session_state.system_logs:
+            st.code("\n".join(st.session_state.system_logs[-40:]))
+
+    with st.expander("LOG CONSOLE (Mobile)", expanded=False):
+        st.code("\n".join(st.session_state.system_logs[-120:]) if st.session_state.system_logs else "No logs.")
 
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
     with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
@@ -557,34 +595,44 @@ def main():
     
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
-    _, market_context = get_news_consolidated(bench, m_cfg["name"])
+    _, market_context, m_sent = get_news_consolidated(bench, m_cfg["name"])
     
+    # Header Panel (Definitions)
+    s_score = clamp(m_sent, -10, 10)
+    lbl = sentiment_label(s_score)
+    spread = sdf.iloc[-1]['RS'] - sdf.iloc[0]['RS']
+    
+    st.markdown(f"""
+    <div class='market-box'>
+    <b>MARKET PULSE ({s_date} - {e_date})</b><br>
+    <span class='caption-text'>
+    Spread: {spread:.1f}pt (RS Max-Min) | Regime: {regime} (200DMA) | NewsSent: <span class='highlight'>{s_score:+d}</span> ({lbl})
+    </span><br><br>
+    </div>
+    """, unsafe_allow_html=True)
+
     market_text = generate_ai_content("market", {
         "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
         "top": sdf.iloc[-1]["Sector"], "bot": sdf.iloc[0]["Sector"],
         "market_name": m_cfg["name"], "headlines": market_context
     })
-    # Force formatting and fill empty outlook
     market_text = enforce_market_format(market_text)
-    market_text = force_nonempty_outlook(market_text, regime, b_stats["Ret"], sdf.iloc[-1]['RS']-sdf.iloc[0]['RS'])
+    market_text = force_nonempty_outlook_market(market_text, regime, b_stats["Ret"], spread)
     market_html = market_to_html(market_text)
     
-    st.markdown(f"""
-    <div class='market-box'>
-    <b>MARKET PULSE ({s_date} - {e_date})</b> | Spread: {sdf.iloc[-1]['RS'] - sdf.iloc[0]['RS']:.1f}pts | Regime: {regime}<br>
-    {market_html}
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<div class='market-box'>{market_html}</div>", unsafe_allow_html=True)
 
     # 2. Sector Rotation
     st.subheader(f"SECTOR ROTATION ({s_date} - {e_date})")
     
-    # Static Chart
     sdf["Label"] = sdf["Sector"] + " (" + sdf["Ret"].apply(lambda x: f"{x:+.1f}%") + ")"
     colors = ["#333"] * len(sdf)
-    if st.session_state.selected_sector in sdf["Sector"].values:
-        idx = sdf[sdf["Sector"] == st.session_state.selected_sector].index[0]
-        colors[sdf.index.get_loc(idx)] = "#00f2fe"
+    if st.session_state.selected_sector:
+        if st.session_state.selected_sector in sdf["Sector"].values:
+            idx = sdf[sdf["Sector"] == st.session_state.selected_sector].index[0]
+            colors[sdf.index.get_loc(idx)] = "#00f2fe"
+    else:
+        colors[len(sdf)-1] = "#00f2fe" # Highlight top by default
 
     fig = px.bar(sdf, x="RS", y="Label", orientation='h', title=f"Relative Strength ({lookback_key})")
     fig.update_traces(customdata=np.stack([sdf["Ret"]], axis=-1), hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>", marker_color=colors)
@@ -592,7 +640,6 @@ def main():
                       xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
     st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True, 'displayModeBar': False})
     
-    # Buttons
     st.write("SELECT SECTOR:")
     cols = st.columns(2)
     for i, row in enumerate(sdf.itertuples()):
@@ -648,14 +695,14 @@ def main():
     cand_lines = []
     for _, r in top3.iterrows():
         fd = get_fundamental_data(r["Ticker"])
-        cand_lines.append(f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, RS {r['RS']:.2f}, Acc {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, MCap {sfloat(fd.get('MCap',0))/1e9:.1f}B, PER {fd.get('PER')}, PBR {fd.get('PBR')}")
+        cand_lines.append(f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, RS {r['RS']:.2f}, Acc {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, MCap {sfloat(fd.get('MCap',0))/1e9:.1f}B, PER {dash(fd.get('PER'))}, PBR {dash(fd.get('PBR'))}")
     
     if not neg.empty:
         nr = neg.iloc[0]
         fd = get_fundamental_data(nr["Ticker"])
-        cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {fd.get('PER')}")
+        cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {dash(fd.get('PER'))}")
 
-    _, sec_news = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, limit_each=5)
+    _, sec_news, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, limit_each=5)
     
     sec_ai_raw = generate_ai_content("sector_debate", {
         "sec": target_sector, "count": len(df), "candidates": "\n".join(cand_lines),
@@ -663,14 +710,21 @@ def main():
     })
     st.markdown(parse_agent_debate(sec_ai_raw), unsafe_allow_html=True)
     
-    with st.expander("EVIDENCE: TOP CANDIDATES", expanded=False):
-        st.markdown("- **Apex**: 投資魅力度スコア (RS+Accel+Ret)\n- **RS**: 市場平均に対する相対リターン差(pt)\n- **HighDist**: 52週高値乖離率")
-        st.dataframe(top3[["Name","Apex","RS","Ret","HighDist"]], hide_index=True, use_container_width=True)
+    # Evidence Table (Non-Collapsible)
+    st.markdown("###### EVIDENCE (Top Candidates)")
+    st.caption("Apex: 投資魅力度 | RS: 相対リターン差(pt) | HighDist: 52週高値乖離 | PER/PBR: 負値除外")
+    
+    # Fetch fundamentals for top3 for display
+    ev_fund = fetch_fundamentals_batch(top3["Ticker"].tolist()).reset_index()
+    ev_df = top3.merge(ev_fund, on="Ticker", how="left")
+    ev_df["PER"] = ev_df["PER"].apply(lambda x: dash(x))
+    ev_df["PBR"] = ev_df["PBR"].apply(lambda x: dash(x))
+    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Ret","HighDist","PER","PBR"]], hide_index=True, use_container_width=True)
 
     # 5. Leaderboard
     st.markdown("##### LEADERBOARD")
     
-    # Fill remaining fundamentals using MERGE (Fix update bug)
+    # Fill remaining fundamentals (Secure Merge)
     rest = fetch_fundamentals_batch(df["Ticker"].tolist()).reset_index()
     df = df.merge(rest, on="Ticker", how="left", suffixes=("", "_rest"))
     for c in ["MCap", "PER", "PBR", "FwdPE"]:
@@ -685,16 +739,22 @@ def main():
         return f"{x/1e6:.0f}M"
     
     df["MCapDisp"] = df["MCap"].apply(fmt_mcap)
-    df_sorted = df.sort_values("MCap", ascending=False)
+    
+    # Display Formatting
+    df_disp = df.copy()
+    for c in ["PER", "PBR"]:
+        df_disp[c] = df_disp[c].apply(lambda x: dash(x))
+    
+    df_sorted = df_disp.sort_values("MCap", ascending=False)
     
     event = st.dataframe(
-        df_sorted[["Name", "MCapDisp", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
+        df_sorted[["Name", "Ticker", "MCapDisp", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
         column_config={
             "MCapDisp": st.column_config.TextColumn("Market Cap"),
             "Apex": st.column_config.NumberColumn(format="%.2f"),
             "RS": st.column_config.NumberColumn("RS (pt)", format="%.2f"),
-            "PER": st.column_config.NumberColumn(format="%.1f"),
-            "PBR": st.column_config.NumberColumn(format="%.1f"),
+            "PER": st.column_config.TextColumn("PER"),
+            "PBR": st.column_config.TextColumn("PBR"),
             "1M": st.column_config.NumberColumn(format="%.1f%%"),
             "12M": st.column_config.NumberColumn(format="%.1f%%"),
         },
@@ -711,21 +771,20 @@ def main():
 
     st.divider()
     
-    # Data Timestamp
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     st.markdown(f"### 🦅 DEEP DIVE: {top['Name']}")
     st.caption(f"Data Timestamp: {now_str} | Source: yfinance (PER/PBR exclude negatives)")
     
-    news_items, news_context = get_news_consolidated(top["Ticker"], top["Name"], limit_each=10)
+    news_items, news_context, _ = get_news_consolidated(top["Ticker"], top["Name"], limit_each=10)
     fund_data = get_fundamental_data(top["Ticker"])
     bench_fd = get_fundamental_data(bench)
     
-    bench_per = sfloat(bench_fd.get("PER"))
-    sector_per = pd.to_numeric(df["PER"], errors="coerce").median()
-    stock_per = sfloat(fund_data.get("PER"))
-    m_comp = f"市場平均PER: {bench_per:.1f}倍 / セクター中央値PER: {sector_per:.1f}倍 / 当該銘柄PER: {stock_per:.1f}倍"
+    bench_per = dash(bench_fd.get("PER"))
+    sector_per = dash(pd.to_numeric(df["PER"], errors="coerce").median())
+    stock_per = dash(fund_data.get("PER"))
+    m_comp = f"市場平均PER: {bench_per}倍 / セクター中央値PER: {sector_per}倍 / 当該銘柄PER: {stock_per}倍"
     
-    fund_str = f"PER:{fund_data.get('PER')}, PBR:{fund_data.get('PBR')}, PEG:{fund_data.get('PEG')}, Target:{fund_data.get('Target')}"
+    fund_str = f"PER:{stock_per}, PBR:{dash(fund_data.get('PBR'))}, PEG:{dash(fund_data.get('PEG'))}, Target:{dash(fund_data.get('Target'))}"
 
     report_txt = generate_ai_content("stock_report", {
         "name": top["Name"], "ticker": top["Ticker"],
@@ -736,8 +795,12 @@ def main():
     with nc1:
         st.markdown(f"<div class='report-box'><b>ANALYST REPORT</b><br>{report_txt}</div>", unsafe_allow_html=True)
         st.caption("PEER COMPARISON (Nearest Market Cap)")
-        df_peers = df_sorted.iloc[(df_sorted["MCap"] - top["MCap"]).abs().argsort()[:4]]
-        st.dataframe(df_peers[["Name", "PER", "PBR", "RS", "12M"]], hide_index=True)
+        try:
+            target_mcap = top["MCap"] if pd.notna(top["MCap"]) else 0
+            df_sorted["Dist"] = (df_sorted["MCap"] - target_mcap).abs()
+            df_peers = df_sorted.sort_values("Dist").iloc[1:5]
+            st.dataframe(df_peers[["Name", "PER", "PBR", "RS", "12M"]], hide_index=True)
+        except: pass
 
     with nc2:
         st.caption("INTEGRATED NEWS FEED")
