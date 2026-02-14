@@ -15,97 +15,102 @@ import streamlit as st
 import yfinance as yf
 
 # ==========================================
-# 0. SYSTEM CONFIG & ERROR LOGGING
+# 0. SYSTEM CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="AlphaLens Architect", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="AlphaLens Sovereign",
+    layout="wide",
+    initial_sidebar_state="expanded", # サイドバーを展開してアイコンバグを防ぐ
+    page_icon="🦅"
+)
 
-# Initialize Session State for Logs
-if "system_logs" not in st.session_state:
-    st.session_state.system_logs = []
-
-def log_error(e: Exception, context: str = ""):
-    """Capture error to sidebar log without stopping app if possible"""
-    err_msg = f"{datetime.now().strftime('%H:%M:%S')} [{context}] {str(e)}"
-    st.session_state.system_logs.append(err_msg)
-    # Print traceback to console for cloud logs
-    print(err_msg)
-    traceback.print_exc()
-
-# Global Error Boundary Wrapper
-def safe_run(func):
+# Global Error Boundary
+def error_boundary(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            log_error(e, func.__name__)
-            st.error(f"⚠️ CRITICAL FAILURE IN {func.__name__}: {str(e)}")
+            st.error(f"⚠️ SYSTEM ERROR: {str(e)}")
+            st.code(traceback.format_exc())
+            # Stop execution safely without crashing the whole app
             return None
     return wrapper
 
 # ==========================================
-# 1. UI DESIGN (PHANTOM DARK)
+# 1. PHANTOM UI DESIGN (CSS)
 # ==========================================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=IBM+Plex+Sans+JP:wght@400;700&display=swap');
+/* FONTS */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Noto+Sans+JP:wght@400;700&display=swap');
 
 :root {
   --bg: #000000;
-  --panel: #0a0a0a;
-  --card: #111111;
+  --panel: #080808;
+  --card: #101010;
   --border: #333333;
   --accent: #00f2fe;
   --text: #e0e0e0;
 }
 
-/* BASE */
+/* GLOBAL RESET */
 html, body, .stApp { background-color: var(--bg) !important; color: var(--text) !important; }
-* { font-family: 'Orbitron', 'IBM Plex Sans JP', sans-serif !important; letter-spacing: 0.5px !important; }
+* { font-family: 'Orbitron', 'Noto Sans JP', sans-serif !important; letter-spacing: 0.5px !important; }
 
-/* HEADERS */
+/* HIDE DEFAULT ELEMENTS THAT CAUSE GLITCHES */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* BRANDING */
 h1, h2, h3, .brand {
   background: linear-gradient(90deg, #fff, #00f2fe);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   font-weight: 900 !important;
-  text-shadow: 0 0 20px rgba(0, 242, 254, 0.5);
+  text-shadow: 0 0 20px rgba(0, 242, 254, 0.6);
+  text-transform: uppercase;
 }
 
 /* CONTAINERS */
-.deck { background: var(--panel); border: 1px solid var(--accent); padding: 20px; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0, 242, 254, 0.1); }
+.deck { background: var(--panel); border: 1px solid var(--accent); padding: 20px; margin-bottom: 20px; box-shadow: 0 0 20px rgba(0, 242, 254, 0.15); }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 15px; margin-bottom: 10px; }
 
-/* TABLE FIX */
-div[data-testid="stDataFrame"] { background-color: var(--bg) !important; border: 1px solid var(--border) !important; }
-[data-testid="stHeader"] { background-color: var(--panel) !important; border-bottom: 1px solid var(--accent) !important; }
+/* TABLE STYLING (NEON CYBERPUNK) */
+div[data-testid="stDataFrame"] { background-color: #000 !important; border: 1px solid var(--border) !important; }
+div[data-testid="stDataFrame"] * { background-color: #000 !important; color: #e0e0e0 !important; font-family: 'Orbitron', monospace !important; }
+[data-testid="stHeader"] { border-bottom: 2px solid var(--accent) !important; }
+[data-testid="stHeader"] * { color: var(--accent) !important; font-weight: 900 !important; }
 
-/* INPUTS */
-div[data-baseweb="select"] > div, div[data-baseweb="popover"] { background-color: #111 !important; border-color: #333 !important; color: #fff !important; }
-li[data-baseweb="option"] { color: #fff !important; }
+/* INPUTS & SELECTBOX (FIX WHITE-ON-WHITE) */
+div[data-baseweb="select"] > div { background-color: #111 !important; border-color: #444 !important; color: #fff !important; }
+div[data-baseweb="popover"], div[data-baseweb="menu"] { background-color: #000 !important; border: 1px solid #444 !important; }
+div[data-baseweb="option"] { color: #fff !important; }
+li[data-baseweb="option"]:hover, li[aria-selected="true"] { background-color: #222 !important; color: #00f2fe !important; }
 .stSelectbox label { color: #888 !important; }
+.stProgress > div > div > div > div { background-color: var(--accent) !important; }
 
 /* BUTTONS */
 button {
   background-color: #000 !important;
   color: var(--accent) !important;
   border: 1px solid #333 !important;
-  border-radius: 4px !important;
+  border-radius: 0px !important;
   font-weight: 800 !important;
   text-transform: uppercase;
+  transition: all 0.3s;
 }
-button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(--accent) !important; }
+button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(--accent) !important; color: #fff !important; }
 
 /* METRICS */
-.kpi { border-left: 4px solid var(--border); background: var(--panel); padding: 10px; }
-.kpi-val { font-size: 20px; color: var(--accent); font-weight: 700; }
-.kpi-lbl { font-size: 10px; color: #888; }
+.kpi { border-left: 4px solid var(--border); background: var(--panel); padding: 10px; margin-bottom: 10px; }
+.kpi-val { font-size: 24px; color: var(--accent); font-weight: 700; text-shadow: 0 0 10px rgba(0,242,254,0.4); }
+.kpi-lbl { font-size: 10px; color: #888; text-transform: uppercase; }
 .status-ok { border-color: #238636 !important; }
+.status-ng { border-color: #da3633 !important; }
 
 /* AI BOX */
-.ai-box { border: 1px dashed var(--accent); background: rgba(0,242,254,0.05); padding: 20px; margin-top: 15px; line-height: 1.8; font-size: 12px; }
-
-/* LOGS */
-.log-box { font-family: monospace; font-size: 10px; color: #da3633; background: #1a0505; padding: 5px; border-left: 3px solid #da3633; margin-bottom: 5px; }
+.ai-box { border: 1px dashed var(--accent); background: rgba(0,242,254,0.05); padding: 20px; margin-top: 15px; line-height: 1.8; font-size: 13px; color: #e0e0e0; }
 
 /* UTILS */
 .muted { color: #888 !important; font-size: 10px !important; }
@@ -118,40 +123,43 @@ button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(
 API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 APP_PASS = st.secrets.get("APP_PASSWORD")
 
-HAS_LIB = False
+# AI Library Setup
 try:
     import google.generativeai as genai
     HAS_LIB = True
     if API_KEY: genai.configure(api_key=API_KEY)
-except Exception as e:
-    log_error(e, "GenAI Import")
+except Exception:
+    HAS_LIB = False
 
 def check_access():
     if not APP_PASS: return True
     if st.session_state.get("auth", False): return True
-    c1, c2, c3 = st.columns([1,2,1])
-    with c2:
+    
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
         st.markdown("<br><br><h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
         with st.form("auth"):
             p = st.text_input("PASSCODE", type="password")
-            if st.form_submit_button("UNLOCK", use_container_width=True):
+            if st.form_submit_button("UNLOCK SYSTEM", use_container_width=True):
                 if p == APP_PASS:
                     st.session_state.auth = True
                     st.rerun()
-                else: st.error("DENIED")
+                else: st.error("ACCESS DENIED")
     return False
 
 if not check_access(): st.stop()
 
 # ==========================================
-# 3. UNIVERSE DEFINITIONS (FULL)
+# 3. UNIVERSE DEFINITIONS (COMPLETE)
 # ==========================================
 LOOKBACKS = {"1W": 5, "1M": 21, "3M": 63, "12M": 252}
 FETCH_PERIOD = "24mo"
 
+# SECTORS
 US_SEC = {"Tech":"XLK", "Health":"XLV", "Fin":"XLF", "Comm":"XLC", "Disc":"XLY", "Staples":"XLP", "Ind":"XLI", "Energy":"XLE", "Mat":"XLB", "Util":"XLU", "RE":"XLRE"}
 JP_SEC = {"通信":"1626.T", "電機":"1631.T", "自動車":"1621.T", "医薬":"1632.T", "銀行":"1623.T", "金融":"1624.T", "商社":"1622.T", "機械":"1630.T", "エネ":"1617.T", "建設":"1618.T", "素材":"1619.T", "食品":"1633.T", "電力":"1628.T", "不動産":"1625.T", "鉄鋼":"1629.T", "サービス":"1627.T", "産機":"1620.T"}
 
+# STOCKS
 US_STOCKS = {
     "Tech": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
     "Comm": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
@@ -190,9 +198,10 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
+# FULL NAME DB
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
-    "1626.T":"通信","1631.T":"電機","1621.T":"自動車","1632.T":"医薬","1623.T":"銀行","1624.T":"金融","1622.T":"商社","1630.T":"機械","1617.T":"エネ","1618.T":"建設","1619.T":"素材","1633.T":"食品","1628.T":"電力","1625.T":"不動産","1629.T":"鉄鋼","1627.T":"サービス","1620.T":"産機",
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
+    "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"エネ資源","1618.T":"建設資材","1619.T":"素材化学","1633.T":"食品","1628.T":"電力ガス","1625.T":"不動産","1629.T":"鉄鋼非鉄","1627.T":"サービス","1620.T":"産業機械",
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
     "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
@@ -210,22 +219,24 @@ NAME_DB = {
     "5711.T":"三菱マテ","5713.T":"住友鉱","5802.T":"住友電工","5406.T":"神戸鋼","3402.T":"東レ","4021.T":"日産化","4188.T":"三菱ケミ","4631.T":"DIC","3765.T":"ガンホー","3659.T":"ネクソン","2002.T":"日清製粉"
 }
 
+def get_name(t: str) -> str:
+    return NAME_DB.get(t, t)
+
 # ==========================================
 # 4. CORE ENGINES
 # ==========================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_bulk_cached(tickers: Tuple[str, ...], period: str) -> pd.DataFrame:
+    # Remove duplicates and None
     tickers = tuple(dict.fromkeys([t for t in tickers if t]))
     frames = []
-    chunk = 80
+    chunk = 50 # Smaller chunk size for reliability
     for i in range(0, len(tickers), chunk):
         c = tickers[i:i+chunk]
         try:
-            r = yf.download(" ".join(c), period=FETCH_PERIOD, interval="1d", group_by="ticker", auto_adjust=True, threads=True, progress=False)
+            r = yf.download(" ".join(c), period=period, interval="1d", group_by="ticker", auto_adjust=True, threads=True, progress=False)
             if not r.empty: frames.append(r)
-        except Exception as e:
-            log_error(e, f"Fetch Chunk {i}")
-            continue
+        except: continue
     return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
 def extract_close(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
@@ -237,11 +248,10 @@ def extract_close(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
             else: return pd.DataFrame()
         else: return pd.DataFrame()
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
+        # Keep only existing columns
         keep = [c for c in expected if c in close.columns]
         return close[keep]
-    except Exception as e:
-        log_error(e, "Extract Close")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def calc_multi_horizon(s: pd.Series) -> Dict[str, float]:
     res = {}
@@ -288,7 +298,49 @@ def zscore(s: pd.Series) -> pd.Series:
     if s.std() == 0: return pd.Series(0.0, index=s.index)
     return (s - s.mean()) / s.std(ddof=0)
 
-def get_name(t: str) -> str: return NAME_DB.get(t, t)
+# ==========================================
+# 5. AI & NEWS ENGINE
+# ==========================================
+def call_ai(ticker: str, name: str, stats: Dict) -> str:
+    # 1. Check Libraries
+    if not HAS_LIB or not API_KEY:
+        return "⚠️ AI OFFLINE: CHECK KEYS"
+
+    # 2. Retry Logic for 429 Errors
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            # Using 2.0-flash as primary per user log
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            
+            prompt = f"""
+            あなたはプロのファンドマネージャーです。
+            以下の銘柄について3名のエージェント（モメンタム、リスク、マクロ）として議論し、結論を出してください。
+            
+            銘柄: {name} ({ticker})
+            指標: RS {stats['RS']:.2f}% (市場比), 加速 {stats['Accel']:.2f}, 最大下落 {stats['MaxDD']:.2f}%
+            騰落: 1W {stats.get('1W',0):.1f}%, 1M {stats.get('1M',0):.1f}%, 12M {stats.get('12M',0):.1f}%
+            
+            出力形式:
+            【モメンタム】...
+            【リスク】...
+            【結論】(強気/中立/弱気) 理由1行
+            """
+            
+            response = model.generate_content(prompt)
+            if response.text: return response.text
+            
+        except Exception as e:
+            # Retry on 429
+            if "429" in str(e) and attempt < max_retries - 1:
+                time.sleep(5) # Wait 5s for free tier reset
+                continue
+            
+            # Return error on final attempt
+            if attempt == max_retries - 1:
+                return f"⚠️ AI BUSY (429): {str(e)}"
+    
+    return "AI ERROR"
 
 @st.cache_data(ttl=1800)
 def fetch_news(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
@@ -296,66 +348,37 @@ def fetch_news(ticker: str, name: str) -> Tuple[List[dict], List[dict]]:
     try:
         raw = yf.Ticker(ticker).news
         if raw: y = [{"title": n.get("title",""), "link": n.get("link","")} for n in raw[:4]]
-    except Exception as e: log_error(e, f"Yahoo News {ticker}")
+    except: pass
     try:
         q = urllib.parse.quote(f"{name} 株")
         with urllib.request.urlopen(f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja", timeout=4) as r:
             root = ET.fromstring(r.read())
             g = [{"title": i.findtext("title"), "link": i.findtext("link")} for i in root.findall(".//item")[:4]]
-    except Exception as e: log_error(e, f"Google News {ticker}")
+    except: pass
     return y, g
 
-def call_ai(ticker: str, name: str, stats: Dict) -> str:
-    # Use verified model name: gemini-2.0-flash
-    if HAS_LIB and API_KEY:
-        try:
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            prompt = f"""
-            プロの投資家として、以下の日本/米国株を分析し、投資判断（モメンタム、リスク、マクロ視点）を議論形式で出力せよ。
-            結論は日本語で断定的に。
-            
-            銘柄: {name} ({ticker})
-            指標: RS {stats['RS']:.2f}% (市場比), Accel {stats['Accel']:.2f}, DD {stats['MaxDD']:.2f}%
-            騰落: 1W {stats.get('1W','N/A')}%, 1M {stats.get('1M','N/A')}%
-            
-            形式:
-            【モメンタム】...
-            【リスク】...
-            【結論】(強気/中立/弱気) 理由1行
-            """
-            return model.generate_content(prompt).text
-        except Exception as e:
-            log_error(e, "Gemini Call")
-            return f"⚠️ AI ERROR: {str(e)}"
-    
-    return "AI OFFLINE (CHECK LOGS)"
-
 # ==========================================
-# 5. MAIN UI
+# 6. MAIN APPLICATION
 # ==========================================
-@safe_run
+@error_boundary
 def main():
-    st.markdown("<h2 class='brand'>ALPHALENS ARCHITECT</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='brand'>ALPHALENS SOVEREIGN</h2>", unsafe_allow_html=True)
     
-    # Sidebar Logs
+    # Sidebar
     with st.sidebar:
-        st.markdown("### 🛑 SYSTEM LOGS")
-        if st.session_state.system_logs:
-            for l in st.session_state.system_logs[-5:]:
-                st.markdown(f"<div class='log-box'>{l}</div>", unsafe_allow_html=True)
-        else:
-            st.caption("No active errors.")
-        
-        if st.button("CLEAR LOGS", use_container_width=True):
-            st.session_state.system_logs = []
-            st.rerun()
+        st.markdown("### SYSTEM STATUS")
+        ai_st = "ONLINE" if HAS_LIB and API_KEY else "OFFLINE"
+        c = "#238636" if ai_st == "ONLINE" else "#da3633"
+        st.markdown(f"**AI ENGINE**: <span style='color:{c}'>{ai_st}</span>", unsafe_allow_html=True)
+        st.caption("Model: gemini-2.0-flash")
 
+    # Header Controls
     with st.container():
         st.markdown("<div class='deck'>", unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
         with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
         with c2: lookback_key = st.selectbox("WINDOW", list(LOOKBACKS.keys()), index=1)
-        with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
+        with c3: st.caption(f"PERIOD: {FETCH_PERIOD}"); st.progress(100)
         with c4: 
             st.write("")
             sync = st.button("SYNC", type="primary", use_container_width=True)
@@ -365,7 +388,7 @@ def main():
     win = LOOKBACKS[lookback_key]
     bench = m_cfg["bench"]
     
-    # 1. Sync
+    # 1. Sync Data
     core_tickers = [bench] + list(m_cfg["sectors"].values())
     if sync or "core_df" not in st.session_state or st.session_state.get("last_m") != market_key:
         with st.spinner("SYNCING MARKET DATA..."):
@@ -377,12 +400,12 @@ def main():
     audit_res = audit_gate(core_tickers, core_df, win)
     
     if bench not in audit_res["list"]:
-        st.error("BENCHMARK UNAVAILABLE")
+        st.error("DATA FEED DISCONNECTED")
         return
 
     col1, col2 = st.columns(2)
-    with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>HEALTH</div><div class='kpi-val'>{audit_res['count']}/{audit_res['total']}</div></div>", unsafe_allow_html=True)
-    with col2: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>DATE</div><div class='kpi-val'>{str(audit_res['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
+    with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>DATA HEALTH</div><div class='kpi-val'>{audit_res['count']}/{audit_res['total']}</div></div>", unsafe_allow_html=True)
+    with col2: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>LATEST DATE</div><div class='kpi-val'>{str(audit_res['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
 
     # 2. Sector Overview
     b_stats = calc_metrics(core_df[bench], core_df[bench], win)
@@ -396,7 +419,7 @@ def main():
                 sec_rows.append(res)
     
     if not sec_rows:
-        st.warning("No sector data available.")
+        st.warning("NO SECTOR DATA")
         return
 
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
@@ -409,6 +432,7 @@ def main():
     
     click_sec = event["selection"]["points"][0]["y"] if event and event.get("selection", {}).get("points") else None
     
+    # 3. Drill Down
     cols = st.columns(6)
     btn_sec = None
     for i, s in enumerate(m_cfg["sectors"].keys()):
@@ -417,7 +441,6 @@ def main():
     target_sector = btn_sec or click_sec or st.session_state.get("target_sector", list(m_cfg["sectors"].keys())[0])
     st.session_state.target_sector = target_sector
     
-    # 3. Drill Down
     st.markdown("---")
     st.subheader(f"FORENSIC: {target_sector}")
     
@@ -444,7 +467,7 @@ def main():
             results.append(stats)
             
     if not results:
-        st.warning("NO DATA FOUND.")
+        st.warning("NO STOCKS FOUND.")
         return
         
     df = pd.DataFrame(results)
@@ -455,6 +478,7 @@ def main():
     df = df.sort_values("Apex", ascending=False).reset_index(drop=True)
     df["Verdict"] = df.apply(lambda r: "STRONG" if r["RS"]>0 and r["Accel"]>0 and r["Stable"]=="✅" else "WATCH" if r["RS"]>0 else "AVOID", axis=1)
 
+    # 4. Table
     c1, c2 = st.columns([1.5, 1])
     with c1:
         st.markdown("##### LEADERBOARD")
@@ -475,6 +499,7 @@ def main():
     sel_rows = event_table.selection.get("rows", [])
     top = df.iloc[sel_rows[0]] if sel_rows else df.iloc[0]
     
+    # 5. AI & News
     with c2:
         st.markdown(f"##### AI INTELLIGENCE: {top['Name']}")
         ai_txt = call_ai(top["Ticker"], top["Name"], top.to_dict())
@@ -486,11 +511,11 @@ def main():
     
     n1, n2 = st.columns(2)
     with n1:
-        st.caption("YAHOO")
+        st.caption("YAHOO FINANCE")
         if not yn: st.write("NO DATA")
         for n in yn: st.markdown(f"- [{n['title']}]({n['link']})")
     with n2:
-        st.caption("GOOGLE")
+        st.caption("GOOGLE NEWS")
         if not gn: st.write("NO DATA")
         for n in gn: st.markdown(f"- [{n['title']}]({n['link']})")
 
