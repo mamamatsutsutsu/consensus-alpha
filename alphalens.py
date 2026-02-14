@@ -33,11 +33,6 @@ def log_system_event(msg: str, level: str = "INFO", tag: str = "SYS"):
     st.session_state.system_logs.append(line)
     st.session_state.system_logs = st.session_state.system_logs[-300:]
 
-# Init Session State
-if "selected_sector" not in st.session_state: st.session_state.selected_sector = None
-if "last_market_key" not in st.session_state: st.session_state.last_market_key = None
-if "last_lookback_key" not in st.session_state: st.session_state.last_lookback_key = None
-
 MARKETS = universe.MARKETS
 NAME_DB = universe.NAME_DB
 LOOKBACKS = {"1W (5d)": 5, "1M (21d)": 21, "3M (63d)": 63, "12M (252d)": 252}
@@ -98,7 +93,6 @@ def build_ir_links(name: str, ticker: str, website: Optional[str], market_key: s
         else:
             q_deck = urllib.parse.quote(f"{name} 決算説明資料 pdf")
             
-    # Use website if valid, else google search
     official = website if website and website.startswith("http") else f"https://www.google.com/search?q={q_site}+official+site"
     
     return {
@@ -505,7 +499,7 @@ def parse_agent_debate(text: str) -> str:
             if buffer and label:
                 content = f"<div class='agent-content'>{buffer}</div>"
                 if "outlook" in curr_cls:
-                    html += f"<div class='{curr_cls}' style='border-left:5px solid #00f2fe; margin-bottom:15px;'><b>{label}</b><br>{content}</div>"
+                    html += f"<div class='{curr_cls}'><b>{label}</b><br>{content}</div>"
                 else:
                     html += f"<div class='agent-row {curr_cls}'><div class='agent-label'>{label}</div>{content}</div>"
             curr_cls, label = mapping[part]
@@ -525,9 +519,16 @@ def parse_agent_debate(text: str) -> str:
 # 5. MAIN UI LOGIC (AlphaLens Class)
 # ==========================================
 def run():
+    # --- UI INIT & STYLES ---
+    st.markdown("""
+<style>
+/* CSS IMPORTED FROM HEADER */
+</style>
+""", unsafe_allow_html=True)
+    
     st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
     
-    # --- UI CONTROLS ---
+    # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
     with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
     with c2: lookback_key = st.selectbox("WINDOW", list(LOOKBACKS.keys()), index=1)
@@ -618,8 +619,9 @@ def run():
     
     # Default Selection: Top Return
     if not st.session_state.selected_sector:
-        best_row = sdf.loc[sdf["Ret"].idxmax()]
+        best_row = sdf_disp.iloc[0]
         st.session_state.selected_sector = best_row["Sector"]
+        # Log removed from UI, but internal state updated
 
     click_sec = st.session_state.selected_sector
     colors = ["#333"] * len(sdf_disp)
@@ -734,7 +736,7 @@ def run():
     ev_df["OpMargin"] = ev_df["OpMargin"].apply(pct)
     ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
     
-    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","1M","3M","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
+    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
 
     # 5. Leaderboard
     universe_cnt = len(stock_list)
@@ -820,7 +822,7 @@ def run():
     
     price_act = ""
     if pa:
-        price_act = f"Last {pa.get('Last',np.nan):.2f}, 1D {pa.get('1D',np.nan):+.2f}%, 1W {pa.get('1W',np.nan):+.2f}%, 1M {pa.get('1M',np.nan):+.2f}%, 3M {pa.get('3M',np.nan):+.2f}%, 200DMA {pa.get('200DMA_Dist',np.nan):+.1f}%, MaxDD(≈6M) {pa.get('MaxDD_6M',np.nan):.1f}%"
+        price_act = f"Last {pa.get('Last',np.nan):.2f} | 1D {pa.get('1D',np.nan):+.2f}% | 1W {pa.get('1W',np.nan):+.2f}% | 1M {pa.get('1M',np.nan):+.2f}% | 3M {pa.get('3M',np.nan):+.2f}% | 200DMA {pa.get('200DMA_Dist',np.nan):+.1f}% | MaxDD(6M) {pa.get('MaxDD_6M',np.nan):.1f}%"
 
     st.markdown(f"<div class='kpi-strip mono'>{price_act}</div>", unsafe_allow_html=True)
 
@@ -863,3 +865,6 @@ def run():
         for n in news_items[:20]:
             dt = datetime.fromtimestamp(n["pub"]).strftime("%Y/%m/%d") if n["pub"] else "-"
             st.markdown(f"- {dt} [{n['src']}] [{n['title']}]({n['link']})")
+
+if __name__ == "__main__":
+    main()
