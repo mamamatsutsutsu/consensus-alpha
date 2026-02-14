@@ -20,7 +20,7 @@ import yfinance as yf
 # 0. SYSTEM CONFIGURATION
 # ==========================================
 st.set_page_config(
-    page_title="AlphaLens",
+    page_title="AlphaLens Pro",
     layout="wide",
     initial_sidebar_state="expanded",
     page_icon="🦅"
@@ -39,7 +39,6 @@ def log_system_event(msg: str, level: str = "INFO"):
     print(entry)
 
 def error_boundary(func):
-    """Decorator to catch errors without crashing the app"""
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -50,27 +49,25 @@ def error_boundary(func):
     return wrapper
 
 # ==========================================
-# 1. PHANTOM UI (Professional, Cyberpunk)
+# 1. PHANTOM UI (Professional High-End)
 # ==========================================
 st.markdown("""
 <style>
-/* FONTS */
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Noto+Sans+JP:wght@400;700&display=swap');
 
 :root {
-  --bg: #000000;
+  --bg: #050505;
   --panel: #0a0a0a;
   --card: #121212;
   --border: #333333;
   --accent: #00f2fe;     /* Cyan */
-  --accent-2: #ff0055;   /* Pink/Red */
-  --accent-3: #00ff88;   /* Green */
-  --accent-4: #ffcc00;   /* Yellow */
+  --accent-neg: #ff0055; /* Red */
   --text: #e0e0e0;
 }
 
 html, body, .stApp { background-color: var(--bg) !important; color: var(--text) !important; }
-* { font-family: 'Orbitron', 'Noto Sans JP', sans-serif !important; letter-spacing: 0.5px !important; }
+* { font-family: 'Noto Sans JP', sans-serif !important; letter-spacing: 0.02em !important; }
+h1, h2, h3, .brand { font-family: 'Orbitron', sans-serif !important; }
 
 /* HIDE DEFAULTS */
 #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
@@ -83,7 +80,7 @@ h1, h2, h3, .brand {
   font-weight: 900 !important;
   text-shadow: 0 0 20px rgba(0, 242, 254, 0.5);
   margin-bottom: 0px !important;
-  padding-bottom: 10px;
+  padding-bottom: 5px;
 }
 
 /* CONTAINERS */
@@ -91,19 +88,9 @@ h1, h2, h3, .brand {
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 15px; }
 
 /* TABLE VISIBILITY FIX */
-div[data-testid="stDataFrame"] {
-    background-color: #151515 !important;
-    border: 1px solid var(--border) !important;
-}
-div[data-testid="stDataFrame"] * {
-    color: #ffffff !important;
-    font-family: 'Noto Sans JP', sans-serif !important;
-    font-size: 13px !important;
-}
-[data-testid="stHeader"] {
-    background-color: #222 !important;
-    border-bottom: 2px solid var(--accent) !important;
-}
+div[data-testid="stDataFrame"] { background-color: #151515 !important; border: 1px solid var(--border) !important; }
+div[data-testid="stDataFrame"] * { color: #ffffff !important; font-size: 13px !important; }
+[data-testid="stHeader"] { background-color: #222 !important; border-bottom: 2px solid var(--accent) !important; }
 
 /* INPUTS */
 div[data-baseweb="select"] > div { background-color: #111 !important; border-color: #444 !important; color: #fff !important; }
@@ -114,50 +101,47 @@ li[data-baseweb="option"]:hover { background-color: #222 !important; color: #00f
 
 /* BUTTONS */
 button {
-  background-color: #111 !important;
-  color: var(--accent) !important;
-  border: 1px solid #333 !important;
-  border-radius: 4px !important;
-  font-weight: 700 !important;
-  text-transform: uppercase;
+  background-color: #111 !important; color: var(--accent) !important;
+  border: 1px solid #333 !important; border-radius: 4px !important;
+  font-weight: 700 !important; text-transform: uppercase;
 }
-button:hover { border-color: var(--accent) !important; box-shadow: 0 0 15px var(--accent) !important; color: #fff !important; }
+button:hover { border-color: var(--accent) !important; box-shadow: 0 0 10px var(--accent) !important; color: #fff !important; }
 
-/* AI AGENT BOXES */
-.ai-box { border: 1px dashed var(--accent); background: rgba(0,242,254,0.05); padding: 20px; margin: 15px 0; border-radius: 8px; color: #eee; }
-
-.agent-box {
-    padding: 15px; margin-bottom: 10px; border-radius: 6px; font-size: 13px; line-height: 1.6; border-left-width: 4px; border-left-style: solid;
-}
-.agent-fundamental { border-left-color: #00f2fe; background: rgba(0, 242, 254, 0.05); }
-.agent-sentiment { border-left-color: #ff0055; background: rgba(255, 0, 85, 0.05); }
-.agent-valuation { border-left-color: #00ff88; background: rgba(0, 255, 136, 0.05); }
-.agent-skeptic { border-left-color: #ffcc00; background: rgba(255, 204, 0, 0.05); }
-.agent-risk { border-left-color: #888888; background: rgba(136, 136, 136, 0.1); }
-.agent-verdict { border: 1px solid #ffffff; background: #1a1a1a; font-weight: bold; margin-top: 15px; padding: 20px; }
-
-/* LOGS */
-.log-box { font-family: monospace; font-size: 10px; color: #ff6b6b; background: #1a0505; padding: 5px; border-left: 3px solid #ff6b6b; margin-bottom: 2px; }
-
-/* MARKET SUMMARY */
-.market-box {
-    border-left: 5px solid var(--accent);
+/* 5-AGENT COUNCIL STYLES (Fixed Typo) */
+.agent-row {
+    display: flex;
+    align-items: baseline; /* Corrected from align_items */
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    border-radius: 4px;
     background: #0f0f0f;
-    padding: 20px;
-    margin-bottom: 20px;
-    font-size: 14px;
-    line-height: 1.7;
-    color: #ddd;
+    border-left-width: 4px;
+    border-left-style: solid;
+    font-size: 13px;
+    line-height: 1.5;
 }
+.agent-label { font-weight: 900; margin-right: 10px; white-space: nowrap; font-family: 'Orbitron'; letter-spacing: 1px; min-width: 100px; }
+.agent-fundamental { border-left-color: #00f2fe; } .agent-fundamental .agent-label { color: #00f2fe; }
+.agent-sentiment { border-left-color: #ff0055; } .agent-sentiment .agent-label { color: #ff0055; }
+.agent-valuation { border-left-color: #00ff88; } .agent-valuation .agent-label { color: #00ff88; }
+.agent-skeptic { border-left-color: #ffcc00; } .agent-skeptic .agent-label { color: #ffcc00; }
+.agent-risk { border-left-color: #888888; } .agent-risk .agent-label { color: #888888; }
+.agent-verdict { border: 1px solid #fff; background: #1a1a1a; padding: 15px; margin-top: 15px; font-weight: bold; }
+.agent-box { padding: 10px; background: #111; color: #888; font-size: 12px; } /* Fallback */
 
-/* REPORT BOX */
+/* MARKET PULSE */
+.market-box {
+    background: #080808; border: 1px solid #333; padding: 20px;
+    margin-bottom: 20px; font-size: 14px; line-height: 1.8; color: #ddd;
+}
+.highlight { color: #00f2fe; font-weight: bold; }
+.highlight-neg { color: #ff0055; font-weight: bold; }
+
+/* REPORT */
 .report-box {
-    background: #111;
-    border-top: 3px solid var(--accent);
-    padding: 20px;
-    margin-top: 10px;
-    line-height: 1.8;
-    color: #eee;
+    background: #111; border-top: 3px solid var(--accent);
+    padding: 20px; margin-top: 10px; line-height: 1.8; color: #eee; font-size: 13px;
+    white-space: pre-wrap;
 }
 
 /* METRICS */
@@ -182,7 +166,6 @@ except Exception as e:
 def check_access():
     if not APP_PASS: return True
     if st.session_state.user_access_granted: return True
-    
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         st.markdown("<br><br><h3 style='text-align:center'>SECURITY GATE</h3>", unsafe_allow_html=True)
@@ -257,25 +240,10 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# FULL NAME DB
+# NAME DB (Simple)
 NAME_DB = {
     "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
-    "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"食品","1618.T":"エネ資源","1619.T":"建設資材","1620.T":"素材化学","1625.T":"電機精密","1627.T":"電力ガス","1628.T":"運輸物流","1629.T":"商社卸売","1633.T":"不動産",
-    "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
-    "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
-    "HD":"Home Depot","MCD":"McDonalds","NKE":"Nike","SBUX":"Starbucks","PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","XOM":"Exxon","CVX":"Chevron","GE":"GE Aero","CAT":"Caterpillar","BA":"Boeing","LMT":"Lockheed","RTX":"RTX","DE":"Deere","MMM":"3M",
-    "LIN":"Linde","NEE":"NextEra","DUK":"Duke","SO":"Southern","AMT":"Amer Tower","PLD":"Prologis","INTC":"Intel","CSCO":"Cisco","IBM":"IBM","UBER":"Uber","ABNB":"Airbnb","PYPL":"PayPal",
-    "8035.T":"東京エレク","6857.T":"アドバンテ","6146.T":"ディスコ","6920.T":"レーザーテク","6723.T":"ルネサス","6758.T":"ソニーG","6501.T":"日立","6981.T":"村田製","6954.T":"ファナック","7741.T":"HOYA","6702.T":"富士通","6503.T":"三菱電機","6752.T":"パナHD","7735.T":"SCREEN","6861.T":"キーエンス","6971.T":"京セラ","6645.T":"オムロン",
-    "9432.T":"NTT","9433.T":"KDDI","9434.T":"ソフトバンク","9984.T":"SBG","4689.T":"LINEヤフー","6098.T":"リクルート","4755.T":"楽天G","9613.T":"NTTデータ","2413.T":"エムスリー","4385.T":"メルカリ",
-    "7203.T":"トヨタ","7267.T":"ホンダ","6902.T":"デンソー","7201.T":"日産","7269.T":"スズキ","7270.T":"SUBARU","7272.T":"ヤマハ発","9101.T":"日本郵船","9104.T":"商船三井","9020.T":"JR東日本","9022.T":"JR東海","9005.T":"東急",
-    "8306.T":"三菱UFJ","8316.T":"三井住友","8411.T":"みずほ","8308.T":"りそな","8309.T":"三井住友トラ","7182.T":"ゆうちょ","5831.T":"しずおかFG","8331.T":"千葉銀","8354.T":"ふくおかFG",
-    "8591.T":"オリックス","8604.T":"野村HD","8766.T":"東京海上","8725.T":"MS&AD","8750.T":"第一生命","8697.T":"日本取引所","8630.T":"SOMPO","8570.T":"イオンFS",
-    "8001.T":"伊藤忠","8031.T":"三井物産","8058.T":"三菱商事","8053.T":"住友商事","8002.T":"丸紅","3382.T":"7&i","9983.T":"ファストリ","8267.T":"イオン","2914.T":"JT",
-    "4063.T":"信越化学","4452.T":"花王","4901.T":"富士フイルム","4911.T":"資生堂","3407.T":"旭化成","5401.T":"日本製鉄","5411.T":"JFE","6301.T":"コマツ","7011.T":"三菱重工","6367.T":"ダイキン","6273.T":"SMC",
-    "1605.T":"INPEX","5020.T":"ENEOS","9501.T":"東電EP","9503.T":"関電","9531.T":"東ガス","4502.T":"武田","4568.T":"第一三共","4519.T":"中外","4503.T":"アステラス","4507.T":"塩野義","4523.T":"エーザイ",
-    "8801.T":"三井不","8802.T":"三菱地所","8830.T":"住友不","4661.T":"OLC","9735.T":"セコム","4324.T":"電通","2127.T":"日本M&A","6028.T":"テクノプロ","2412.T":"ベネフィット","4689.T":"LINEヤフー",
-    "6146.T":"ディスコ","6460.T":"セガサミー","6471.T":"日本精工","6268.T":"ナブテスコ","2801.T":"キッコーマン","2802.T":"味の素",
-    "5711.T":"三菱マテ","5713.T":"住友鉱","5802.T":"住友電工","5406.T":"神戸鋼","3402.T":"東レ","4021.T":"日産化","4188.T":"三菱ケミ","4631.T":"DIC","3765.T":"ガンホー","3659.T":"ネクソン","2002.T":"日清製粉"
+    "1617.T":"食品ETF","1618.T":"エネ資源ETF","1619.T":"建設資材ETF","1620.T":"素材化学ETF","1621.T":"医薬品ETF","1622.T":"自動車ETF","1623.T":"鉄鋼非鉄ETF","1624.T":"機械ETF","1625.T":"電機精密ETF","1626.T":"情報通信ETF","1627.T":"電力ガスETF","1628.T":"運輸物流ETF","1629.T":"商社卸売ETF","1630.T":"小売ETF","1631.T":"銀行ETF","1632.T":"金融(除銀行)ETF","1633.T":"不動産ETF",
 }
 
 def get_name(t: str) -> str: return NAME_DB.get(t, t)
@@ -314,20 +282,16 @@ def extract_close_prices(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
 def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
-    # Strict Length Check (DROPNA first)
     s_clean = s.dropna()
     b_clean = b.dropna()
     
     if len(s_clean) < win + 1 or len(b_clean) < win + 1: return None
     
-    # 2. Fill NaN with ffill ONLY (No Bfill!)
     s_win = s.ffill().tail(win+1)
     b_win = b.ffill().tail(win+1)
     
-    # 3. Final check
     if s_win.isna().iloc[0] or b_win.isna().iloc[0]: return None
 
-    # Use Filled data for calculation to avoid NaN blowout
     p_ret = (s_win.iloc[-1]/s_win.iloc[0]-1)*100
     b_ret = (b_win.iloc[-1]/b_win.iloc[0]-1)*100
     rs = p_ret - b_ret
@@ -337,7 +301,7 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     accel = p_half - (p_ret/2)
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
-    # 52W High Ratio
+    # 52W High
     if len(s_clean) >= 252:
         year_high = s_clean.tail(252).max()
     else:
@@ -346,50 +310,44 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     curr = s_win.iloc[-1]
     high_dist = (curr / year_high - 1) * 100 if year_high > 0 else 0
     
-    # Multi-Horizon with NaN
+    # Multi-Horizon
     rets = {}
+    s_ffill = s.ffill()
     for l, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
-        if len(s_win) > d:
-            try:
-                rets[l] = (s_win.iloc[-1] / s_win.iloc[-1-d] - 1) * 100
-            except: rets[l] = np.nan
+        if len(s_ffill) > d:
+            rets[l] = (s_ffill.iloc[-1] / s_ffill.iloc[-1-d] - 1) * 100
         else:
             rets[l] = np.nan
     
     return {"RS": rs, "Accel": accel, "MaxDD": dd, "Ret": p_ret, "HighDist": high_dist, **rets}
 
-def calculate_regime(bench_series: pd.Series) -> Tuple[str, float]:
-    if len(bench_series) < 200: return "Unknown", 0.5
-    
-    curr = bench_series.iloc[-1]
-    ma200 = bench_series.rolling(200).mean().iloc[-1]
-    vol20 = bench_series.pct_change().tail(20).std() * np.sqrt(252)
-    
-    trend = "Bull" if curr > ma200 else "Bear"
-    vol_state = "High" if vol20 > 0.15 else "Low" # 15% threshold
-    regime = f"{trend} / {vol_state} Vol"
-    weight_momentum = 0.6 if trend == "Bull" else 0.3
-    return regime, weight_momentum
-
-def audit_data_availability(expected: List[str], df: pd.DataFrame, win: int):
-    present = [t for t in expected if t in df.columns]
-    if not present: return {"ok": False, "list": []}
-    
-    last_valid = df[present].apply(lambda x: x.last_valid_index())
-    mode_date = last_valid.mode().iloc[0] if not last_valid.empty else None
-    
-    computable = []
-    for t in present:
-        if last_valid[t] == mode_date and len(df[t].dropna()) >= win + 1:
-            computable.append(t)
-            
-    return {"ok": True, "list": computable, "mode": mode_date, "count": len(computable), "total": len(expected)}
-
 def calculate_zscore(s: pd.Series) -> pd.Series:
     if s.std() == 0: return pd.Series(0.0, index=s.index)
     return (s - s.mean()) / s.std(ddof=0)
 
-# --- AI & NEWS (ROBUST & SORTED) ---
+# --- AI & NEWS (RICH DATA) ---
+
+@st.cache_data(ttl=1800)
+def get_fundamental_data_rich(ticker: str) -> Dict[str, Any]:
+    """Rich Fundamental Data for AI"""
+    try:
+        info = yf.Ticker(ticker).info or {}
+        def fmt(x): return None if x in [None, "N/A"] else x
+        return {
+            "price": fmt(info.get("currentPrice")),
+            "mcap": fmt(info.get("marketCap")),
+            "fwdPE": fmt(info.get("forwardPE")),
+            "trailPE": fmt(info.get("trailingPE")),
+            "PBR": fmt(info.get("priceToBook")),
+            "revGrowth": fmt(info.get("revenueGrowth")),
+            "earnGrowth": fmt(info.get("earningsGrowth")),
+            "opMargin": fmt(info.get("operatingMargins")),
+            "divYield": fmt(info.get("dividendYield")),
+            "beta": fmt(info.get("beta")),
+            "target": fmt(info.get("targetMeanPrice")),
+            "rec": fmt(info.get("recommendationKey"))
+        }
+    except: return {}
 
 @st.cache_data(ttl=1800)
 def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple[List[dict], str]:
@@ -405,12 +363,10 @@ def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple
             pub = n.get("providerPublishTime")
             pub = int(pub) if isinstance(pub, (int, float)) else 0
             news_items.append({"title": title, "link": link, "pub": pub, "src": "Yahoo"})
-            if title:
-                context_lines.append(f"- {title}")
-    except:
-        pass
+            if title: context_lines.append(f"- {title}")
+    except: pass
 
-    # Google RSS
+    # Google
     try:
         q = urllib.parse.quote(f"{name} 株")
         url = f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja"
@@ -424,139 +380,172 @@ def get_news_consolidated(ticker: str, name: str, limit_each: int = 10) -> Tuple
                 try:
                     dt = email.utils.parsedate_to_datetime(d)
                     pub = int(dt.timestamp())
-                except:
-                    pub = 0
+                except: pub = 0
                 news_items.append({"title": title, "link": link, "pub": pub, "src": "Google"})
-                if title:
-                    context_lines.append(f"- {title}")
-    except:
-        pass
+                if title: context_lines.append(f"- {title}")
+    except: pass
 
-    # Sort descending by publish timestamp
     news_items.sort(key=lambda x: x["pub"], reverse=True)
-    context = "\n".join(context_lines[:15]) 
+    context = "\n".join(context_lines[:12]) 
     return news_items, context
 
-@st.cache_data(ttl=3600)
-def get_fundamental_data(ticker: str) -> Dict[str, Any]:
-    """Fetch fundamental data safely"""
-    try:
-        info = yf.Ticker(ticker).info
-        return {
-            "forwardPE": info.get("forwardPE", "N/A"),
-            "trailingPE": info.get("trailingPE", "N/A"),
-            "priceToBook": info.get("priceToBook", "N/A"),
-            "pegRatio": info.get("pegRatio", "N/A"),
-            "targetMeanPrice": info.get("targetMeanPrice", "N/A"),
-            "recommendationKey": info.get("recommendationKey", "N/A")
-        }
-    except:
-        return {}
+def markdown_bold_to_html(text: str) -> str:
+    """Convert Markdown bold to HTML highlight"""
+    def repl(m):
+        inner = m.group(1)
+        # Check for negative context
+        cls = "highlight-neg" if any(x in inner for x in ["-", "−", "マイナス", "下落", "弱"]) else "highlight"
+        return f"<span class='{cls}'>{inner}</span>"
+    
+    text = re.sub(r"\*\*(.+?)\*\*", repl, text)
+    # Force double newline before bullet points header
+    text = re.sub(r"(【主な変動要因】)", r"\n\n\1", text)
+    return text
+
+def parse_agent_debate(text: str) -> str:
+    """Robust Parser for Agent Debate"""
+    mapping = {
+        "[FUNDAMENTAL]": ("agent-fundamental", "FUNDAMENTAL"),
+        "[SENTIMENT]": ("agent-sentiment", "SENTIMENT"),
+        "[VALUATION]": ("agent-valuation", "VALUATION"),
+        "[SKEPTIC]": ("agent-skeptic", "SKEPTIC"),
+        "[RISK]": ("agent-risk", "RISK"),
+        "[JUDGE]": ("agent-verdict", "JUDGE"),
+    }
+    
+    # Clean code blocks
+    clean = text.replace("```html", "").replace("```", "").strip()
+    
+    # Remove preface before first tag
+    m = re.search(r"\[[A-Z]+\]", clean)
+    if m: clean = clean[m.start():]
+    
+    # Split by tags
+    parts = re.split(r'(\[[A-Z]+\])', clean)
+    
+    html = ""
+    current_cls = None
+    current_label = None
+    buffer = ""
+    
+    def flush():
+        nonlocal html, buffer, current_cls, current_label
+        if current_cls and current_label and buffer.strip():
+            # Force single line content (no newlines in buffer)
+            b = re.sub(r"\s*\n+\s*", " ", buffer).strip()
+            html += f"<div class='agent-row {current_cls}'><div class='agent-label'>{current_label}</div><div>{b}</div></div>"
+        buffer = ""
+
+    for part in parts:
+        part = part.strip()
+        if not part: continue
+        
+        if part in mapping:
+            flush()
+            current_cls, current_label = mapping[part]
+        else:
+            buffer += (" " + part)
+            
+    flush()
+    if not html: html = f"<div class='agent-box'>{clean}</div>"
+    return html
+
+def build_sector_candidates_context(df: pd.DataFrame, n: int = 6) -> str:
+    cand = df.head(n).copy()
+    lines = []
+    for _, r in cand.iterrows():
+        # Handle NaN safely
+        ret = f"{r['Ret']:.1f}" if pd.notna(r['Ret']) else "-"
+        rs = f"{r['RS']:.1f}"
+        
+        lines.append(
+            f"{r['Name']}({r['Ticker']}): Apex {r['Apex']:.2f}, RS {rs}, Ret {ret}%, "
+            f"1M {r['1M']:.1f}%, 3M {r['3M']:.1f}%"
+        )
+    return "\n".join(lines)
 
 @st.cache_data(ttl=3600)
 def generate_ai_content(prompt_key: str, context: Dict) -> str:
     if not HAS_LIB or not API_KEY: return "⚠️ AI OFFLINE"
     
+    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    p = ""
+
     if prompt_key == "market":
         p = f"""
-        期間:{context['s_date']}〜{context['e_date']}
-        市場:{context['market_name']}
-        ベンチリターン:{context['ret']:.2f}%
-        セクター最強:{context['top']} セクター最弱:{context['bot']}
-        素材(見出し):{context['headlines']}
+期間:{context['s_date']}〜{context['e_date']}
+市場:{context['market_name']}
+ベンチリターン:{context['ret']:.2f}%
+セクター最強:{context['top']} セクター最弱:{context['bot']}
+素材(見出し):{context['headlines']}
 
-        タスク:この期間の市場概況を、読み手が「これだけで動きが納得できる」ように完結させて書け。
-        要件:
-        - 450〜650字。段落の間に空行を入れない。
-        - 数値(ベンチリターン/最強最弱)と理由(材料)を必ず結びつける。
-        - 理由は「何が起きた→どの資産/セクターに資金が動いた→指数に+/-寄与」の順で因果を書く。
-        - 断定しすぎず、材料が弱い場合は「可能性が高い/示唆」と表現してよいが、理由そのものは必ず書く。
-        - 「ニュースでは、」「〜がありました」等の無駄な前置きは禁止。いきなり本題から。
-        最後に【主な変動要因】として3〜6個の箇条書き。各行は必ず「(+)/(−)」で符号を付け、何がどう効いたかを具体的に(例:金利上昇→グロース逆風→テック軟化(−))。
-        """
+タスク:この期間の市場概況を、読み手が「これだけで動きが納得できる」ように完結させて書け。
+要件:
+- 450〜650字。段落の間に空行を入れない。
+- 数値(ベンチリターン/最強最弱)と理由(材料)を必ず結びつける。
+- 理由は「何が起きた→どの資産/セクターに資金が動いた→指数に+/-寄与」の順で因果を書く。
+- 断定しすぎず、材料が弱い場合は「可能性が高い/示唆」と表現してよいが、理由そのものは必ず書く。
+- 「ニュースでは、」「〜がありました」等の無駄な前置きは禁止。いきなり本題から。
+- 重要な上昇要因/プラス材料は **太字** で強調。
+- 重要な下落要因/リスクは **太字** で強調。
+最後に【主な変動要因】として3〜6個の箇条書き。各行は必ず「(+)/(−)」で符号を付け、何がどう効いたかを具体的に(例:金利上昇→グロース逆風→テック軟化(−))。
+"""
     elif prompt_key == "sector_debate":
         p = f"""
-        あなたは5名の専門エージェント(Fundamental, Sentiment, Valuation, Skeptic, Risk)。
-        対象セクター:{context['sec']}
-        対象期間(見通し):今後3ヶ月(短期)
-        構成銘柄数:{context['count']}
-        追加情報(上位銘柄/統計):
-        - 上位5銘柄:{context.get('top5','')}
-        - セクター平均RS:{context.get('avg_rs','')}
+あなたは5名の専門エージェント(Fundamental, Sentiment, Valuation, Skeptic, Risk)。
+対象セクター:{context['sec']}
+対象期間(見通し):今後3ヶ月(短期)
+構成銘柄数:{context['count']}
+候補銘柄データ:
+{context.get('candidates','')}
 
-        タスク:このセクター内で「短期(3ヶ月)の推奨」を作る。個別企業の深掘りではなく、セクター内の相対推奨(どのタイプ/条件の銘柄が有利か、上位候補は誰か)を結論づける。
-        出力形式(必須):
-        [FUNDAMENTAL] 3ヶ月で効きやすい業績/需給/マクロの論点→プラス/マイナス
-        [SENTIMENT] センチメント/ポジショニング/ニュースフローの方向→プラス/マイナス
-        [VALUATION] バリュエーション観点(割安/割高ではなく「短期の再評価余地」)→プラス/マイナス
-        [SKEPTIC] 反論:なぜその見方が外れ得るか、逆回転条件
-        [RISK] 3ヶ月で起きやすいリスク(イベント、金利、為替、規制、決算集中など)と回避策
-        [JUDGE] セクター推奨度(強気/中立/弱気)、短期で優位な“条件”、注目銘柄があるなら最大3つ(理由を一行ずつ)
-        """
+タスク:このセクター内で「短期(3ヶ月)の推奨」を作る。個別企業の深掘りではなく、セクター内の相対推奨(どのタイプ/条件の銘柄が有利か、上位候補は誰か)を結論づける。
+各エージェントは改行せず1ブロックで意見を述べよ。
+
+出力形式(必須):
+[FUNDAMENTAL] 3ヶ月で効きやすい業績/需給/マクロの論点→プラス/マイナス
+[SENTIMENT] センチメント/ポジショニング/ニュースフローの方向→プラス/マイナス
+[VALUATION] バリュエーション観点(割安/割高ではなく「短期の再評価余地」)→プラス/マイナス
+[SKEPTIC] 反論:なぜその見方が外れ得るか、逆回転条件
+[RISK] 3ヶ月で起きやすいリスク(イベント、金利、為替、規制、決算集中など)と回避策
+[JUDGE] セクター推奨度(強気/中立/弱気)、短期で優位な“条件”、注目銘柄があるなら最大3つ(理由を一行ずつ)
+"""
     elif prompt_key == "stock_report":
-        # Inject Fundamental Data
-        fund = context.get("fundamentals", {})
-        fund_str = f"PER(Fwd):{fund.get('forwardPE')}, PBR:{fund.get('priceToBook')}, PEG:{fund.get('pegRatio')}, Target:{fund.get('targetMeanPrice')}"
+        fund = context.get("fund", {})
+        tech = context.get("tech", {})
         
+        # Snapshot string
+        snap = f"直近リターン(1M/3M/12M): {tech.get('ret_1m'):.1f}% / {tech.get('ret_3m'):.1f}% / {tech.get('ret_12m'):.1f}%\n"
+        snap += f"MaxDD: {tech.get('maxdd'):.1f}%, 高値乖離: {tech.get('highdist'):.1f}%\n"
+        snap += f"予想PER: {fund.get('fwdPE')}, PBR: {fund.get('PBR')}, PEG: {fund.get('pegRatio')}, 目標株価: {fund.get('target')}"
+
         p = f"""
         銘柄: {context['name']} ({context['ticker']})
-        基礎データ: {fund_str}
         
-        上記データと一般的な知識に基づき、企業概要、直近決算のポイント、市場コンセンサスを、
-        プロのアナリストレポートとしてまとめよ。挨拶不要。
-        数値データがある場合は必ず言及し、割安/割高の判断材料とせよ。
+        0. MARKET SNAPSHOT（必須・そのまま引用）:
+        {snap}
+        
+        ニュース材料:
+        {context.get('news','')}
+        
+        上記に基づき、以下の構成でプロ向けアナリストレポートを作成せよ。
+        文体:「だ・である」調。挨拶不要。不明な項目は「不明」と書かず黙って省略せよ。
+        
+        1. **企業概要**: 何をしている会社か簡潔に。
+        2. **定量的評価**: 上記スナップショットの数値を用いたバリュエーション/モメンタム評価。
+        3. **直近のトピック**: ニュースから読み取れる好材料・悪材料。
+        4. **コンセンサス**: 市場の期待値と今後の注目点。
         """
-    else: return "Error"
 
-    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
     for m in models:
         try:
             model = genai.GenerativeModel(m)
             text = model.generate_content(p).text
-            # Clean up empty lines
-            return re.sub(r"\n{2,}", "\n", text).strip()
+            return text.strip()
         except Exception as e:
             if "429" in str(e): time.sleep(1); continue
             
     return "AI Unavailable"
-
-def parse_agent_debate(text: str) -> str:
-    html = ""
-    mapping = {
-        "[FUNDAMENTAL]": "agent-fundamental",
-        "[SENTIMENT]": "agent-sentiment",
-        "[VALUATION]": "agent-valuation",
-        "[SKEPTIC]": "agent-skeptic",
-        "[RISK]": "agent-risk",
-        "[JUDGE]": "agent-verdict"
-    }
-    
-    # Remove markdown code blocks
-    clean_text = text.replace("```html", "").replace("```", "")
-    lines = clean_text.split("\n")
-    buffer = []
-    current_cls = "agent-box"
-    
-    for line in lines:
-        tag_found = False
-        for tag, cls in mapping.items():
-            if tag in line:
-                if buffer:
-                    html += f"<div class='agent-box {current_cls}'>{'<br>'.join(buffer)}</div>"
-                    buffer = []
-                current_cls = cls
-                line = line.replace(tag, f"<b>{tag.replace('[','').replace(']','')}</b>")
-                tag_found = True
-                break
-        buffer.append(line)
-    
-    if buffer:
-        html += f"<div class='agent-box {current_cls}'>{'<br>'.join(buffer)}</div>"
-    
-    if not html: # Fallback if no tags
-        html = f"<div class='agent-box'>{clean_text}</div>"
-        
-    return html
 
 # ==========================================
 # 5. MAIN UI LOGIC
@@ -613,8 +602,6 @@ def main():
         st.error("BENCH METRICS FAILED. PLEASE SYNC AGAIN.")
         return
 
-    regime, weight_mom = calculate_regime(core_df[bench].dropna())
-    
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
         if s_t in audit["list"]:
@@ -623,13 +610,16 @@ def main():
                 res["Sector"] = s_n
                 sec_rows.append(res)
     
+    # GUARD: Empty Sectors
     if not sec_rows:
-        st.warning("SECTOR ETF DATA INSUFFICIENT. Showing market only.")
+        st.warning("SECTOR ETF DATA INSUFFICIENT.")
         top_sec, bot_sec = "N/A", "N/A"
         sdf = pd.DataFrame([{"Sector":"N/A","RS":0.0}])
+        spread = 0.0
     else:
         sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
         top_sec, bot_sec = sdf.iloc[-1]["Sector"], sdf.iloc[0]["Sector"]
+        spread = sdf.iloc[-1]["RS"] - sdf.iloc[0]["RS"]
     
     # Market AI Summary
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
@@ -643,31 +633,43 @@ def main():
         "headlines": market_context
     })
     
+    # Apply Highlight to Market Text
+    market_html = markdown_bold_to_html(market_text).replace("\n", "<br>")
+    
     st.markdown(f"""
     <div class='market-box'>
-    <b>MARKET PULSE ({s_date} - {e_date}) | REGIME: {regime}</b><br>
-    {market_text}
+    <b>MARKET PULSE ({s_date} - {e_date})</b> | Spread: {spread:.1f}pts<br>
+    {market_html}
     </div>
     """, unsafe_allow_html=True)
 
-    # --- 2. Sector Rotation (Correct Sync) ---
+    # --- 2. Sector Rotation ---
     st.subheader(f"SECTOR ROTATION ({s_date} - {e_date})")
     
-    # (1) Read Chart Selection First
+    # Summary Line
+    if not sdf.empty and "Ret" in sdf.columns:
+        top_row = sdf.iloc[-1]
+        bot_row = sdf.iloc[0]
+        rot_sum = (
+            f"ベンチマーク: <span class='highlight'>{b_stats['Ret']:.2f}%</span> | "
+            f"最強: <span class='highlight'>{top_row['Sector']}</span> ({top_row.get('Ret',0):.2f}%) | "
+            f"最弱: <span class='highlight-neg'>{bot_row['Sector']}</span> ({bot_row.get('Ret',0):.2f}%)"
+        )
+        st.markdown(f"<div style='margin-bottom:10px; font-size:13px'>{rot_sum}</div>", unsafe_allow_html=True)
+
+    # Chart Selection Logic
     click_sec = None
     sel = st.session_state.get("sector_chart", None)
     try:
-        # dict case
         if isinstance(sel, dict) and sel.get("selection", {}).get("points"):
             click_sec = sel["selection"]["points"][0].get("y")
-        # object case
         elif sel and hasattr(sel, "selection") and sel.selection and sel.selection.get("points"):
             click_sec = sel.selection["points"][0].get("y")
     except: pass
 
     if click_sec: st.session_state.selected_sector = click_sec
 
-    # (2) Build Colors based on State
+    # Colors
     selected = st.session_state.selected_sector
     colors = ["#333"] * len(sdf)
     if selected and selected in sdf["Sector"].values:
@@ -680,7 +682,7 @@ def main():
     
     st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="sector_chart")
     
-    # (3) Responsive Buttons with Checkmark
+    # Buttons (2 cols + checkmark)
     st.write("SELECT SECTOR:")
     cols = st.columns(2)
     valid_sectors = set(m_cfg["sectors"].keys())
@@ -693,32 +695,28 @@ def main():
             
     # Validate Sector
     if st.session_state.selected_sector not in valid_sectors:
-        st.session_state.selected_sector = list(m_cfg["sectors"].keys())[0] if valid_sectors else None
+        st.session_state.selected_sector = list(valid_sectors)[0] if valid_sectors else None
         
     target_sector = st.session_state.selected_sector
     
-    # Navigation Link
     if target_sector:
         st.caption(f"Current: **{target_sector}** → [Jump to Analysis](#sector_anchor)")
-        if click_sec: st.toast(f"Sector Selected: {target_sector}", icon="🦅")
 
     # --- 3. Sector Forensic ---
     st.markdown(f"<div id='sector_anchor'></div>", unsafe_allow_html=True)
     st.divider()
     st.subheader(f"SECTOR FORENSIC: {target_sector}")
     
-    if not target_sector: return
-
     stock_list = m_cfg["stocks"].get(target_sector, [])
     if not stock_list:
-        st.warning(f"No stocks mapped for {target_sector}. Check configuration.")
+        st.warning("No stocks mapped.")
         return
 
     full_list = [bench] + stock_list
-    
     cache_key = f"{market_key}_{target_sector}_{lookback_key}"
+    
     if cache_key != st.session_state.get("sec_cache_key") or sync:
-        with st.spinner(f"ANALYZING {target_sector}..."):
+        with st.spinner(f"ANALYZING {len(stock_list)} STOCKS..."):
             raw_s = fetch_market_data(tuple(full_list), FETCH_PERIOD)
             st.session_state.sec_df = extract_close_prices(raw_s, full_list)
             st.session_state.sec_cache_key = cache_key
@@ -735,37 +733,42 @@ def main():
             results.append(stats)
             
     if not results:
-        st.warning("NO VALID DATA FOR SECTOR STOCKS.")
+        st.warning("NO DATA.")
         return
         
     df = pd.DataFrame(results)
-    # Dynamic Scoring
-    w_rs = weight_mom
-    w_acc = 0.8 - w_rs
-    df["Apex"] = w_rs * calculate_zscore(df["RS"]) + w_acc * calculate_zscore(df["Accel"]) + 0.2 * calculate_zscore(df["Ret"])
-    
-    # Confidence Score
-    df["Conf"] = 80 + (calculate_zscore(df["Apex"]).abs() * 5).clip(0, 15)
-    
+    df["Apex"] = 0.5 * calculate_zscore(df["RS"]) + 0.3 * calculate_zscore(df["Accel"]) + 0.2 * calculate_zscore(df["Ret"])
     df = df.sort_values("Apex", ascending=False)
     
     # --- 4. 5-AGENT SECTOR COUNCIL ---
-    st.markdown("##### 🦅 5-AGENT SECTOR COUNCIL")
-    top5_names = ", ".join(df.head(5)["Name"].tolist())
+    st.markdown("##### 🦅 5-AGENT SECTOR COUNCIL (Top Picks Strategy)")
+    
+    # Pass Candidates Data to AI
+    cand_ctx = build_sector_candidates_context(df, n=6)
+    _, sec_news = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, limit_each=5)
+    
     sec_ai_raw = generate_ai_content("sector_debate", {
         "sec": target_sector,
         "count": len(df),
-        "top5": top5_names,
-        "avg_rs": f"{df['RS'].mean():.2f}"
+        "candidates": cand_ctx,
+        "top5": ", ".join(df.head(5)["Name"].tolist()),
+        "avg_rs": f"{df['RS'].mean():.2f}",
+        "news": sec_news
     })
     st.markdown(parse_agent_debate(sec_ai_raw), unsafe_allow_html=True)
+    
+    # Mini Table for Proof
+    st.caption("EVIDENCE: TOP CANDIDATES")
+    st.dataframe(
+        df.head(6)[["Name","Apex","RS","Accel","Ret","1M","HighDist"]],
+        hide_index=True, use_container_width=True
+    )
 
     # --- 5. Leaderboard ---
     st.markdown("##### LEADERBOARD")
     event = st.dataframe(
-        df[["Name", "Conf", "Apex", "RS", "Accel", "HighDist", "1W", "1M", "12M"]],
+        df[["Name", "Apex", "RS", "Accel", "HighDist", "1W", "1M", "12M"]],
         column_config={
-            "Conf": st.column_config.ProgressColumn("Confidence", format="%.0f", min_value=0, max_value=100),
             "Apex": st.column_config.NumberColumn(format="%.2f"),
             "RS": st.column_config.ProgressColumn(format="%.2f%%", min_value=-20, max_value=20),
             "Accel": st.column_config.NumberColumn(format="%.2f"),
@@ -776,12 +779,11 @@ def main():
         },
         hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
     )
-        
-    # --- 6. Deep Dive (News & Report) ---
-    top = df.iloc[0] # Default
+    
+    # --- 6. Deep Dive (Report) ---
+    top = df.iloc[0]
     is_default = True
     try:
-        # Robust Selection
         if hasattr(event, "selection") and event.selection:
             sel_rows = event.selection.get("rows", [])
             if sel_rows:
@@ -793,14 +795,22 @@ def main():
     lbl = f"{top['Name']} (Default: Top Ranked)" if is_default else top['Name']
     st.markdown(f"### 🦅 DEEP DIVE: {lbl}")
     
-    # Fetch sorted news & Fundamental Data for Report
-    news_items, _ = get_news_consolidated(top["Ticker"], top["Name"], limit_each=10)
-    fund_data = get_fundamental_data(top["Ticker"])
+    # Fetch Data
+    news_items, news_context = get_news_consolidated(top["Ticker"], top["Name"], limit_each=10)
+    fund_data = get_fundamental_data_rich(top["Ticker"])
+    
+    # Tech Context for Report
+    tech_ctx = {
+        "ret_1m": top.get("1M", np.nan),
+        "ret_3m": top.get("3M", np.nan),
+        "ret_12m": top.get("12M", np.nan),
+        "maxdd": top.get("MaxDD", np.nan),
+        "highdist": top.get("HighDist", np.nan)
+    }
     
     report_txt = generate_ai_content("stock_report", {
-        "name": top["Name"], 
-        "ticker": top["Ticker"],
-        "fundamentals": fund_data
+        "name": top["Name"], "ticker": top["Ticker"],
+        "fund": fund_data, "tech": tech_ctx, "news": news_context
     })
     
     nc1, nc2 = st.columns([1.5, 1])
