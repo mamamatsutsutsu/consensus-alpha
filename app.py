@@ -32,7 +32,7 @@ except ImportError:
 st.set_page_config(
     page_title="AlphaLens Pro",
     layout="wide",
-    initial_sidebar_state="collapsed", # Hide sidebar by default
+    initial_sidebar_state="collapsed",
     page_icon="🦅"
 )
 
@@ -42,25 +42,25 @@ if "user_access_granted" not in st.session_state: st.session_state.user_access_g
 if "selected_sector" not in st.session_state: st.session_state.selected_sector = None
 if "last_market_key" not in st.session_state: st.session_state.last_market_key = None
 
-def log_system_event(msg: str, level: str = "INFO"):
+def log_system_event(msg: str, level: str = "INFO", tag: str = "SYS"):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    line = f"[{timestamp}] [{level}] {msg}"
+    line = f"[{timestamp}] [{level}] [{tag}] {msg}"
     print(line)
     st.session_state.system_logs.append(line)
-    st.session_state.system_logs = st.session_state.system_logs[-300:] # Cap logs
+    st.session_state.system_logs = st.session_state.system_logs[-300:]
 
 def error_boundary(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            log_system_event(f"{func.__name__}: {str(e)}", "ERROR")
+            log_system_event(f"{func.__name__}: {str(e)}", "ERROR", "SYS")
             st.error(f"⚠️ SYSTEM ERROR: {str(e)}")
             return None
     return wrapper
 
 # ==========================================
-# 1. UI STYLING (CYBER TERMINAL)
+# 1. UI STYLING (CYBER TERMINAL - FONT FIXED)
 # ==========================================
 st.markdown("""
 <style>
@@ -73,32 +73,39 @@ st.markdown("""
   --border: #333333;
   --accent: #00f2fe;     /* Cyan */
   --accent-2: #ff0055;   /* Pink */
+  --accent-3: #00ff88;   /* Green */
   --text: #e0e0e0;
 }
 
-/* GLOBAL FONT: ROBOTO MONO */
+/* FONT POLICY: SYSTEM LOGS FIRST */
 html, body, .stApp { 
   background-color: var(--bg) !important; 
   color: var(--text) !important; 
-  font-family: 'Roboto Mono', monospace !important;
+  font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Noto Sans JP", monospace !important;
 }
 
-/* Base Text */
+/* Force Monospace everywhere */
 * { 
-  font-family: 'Noto Sans JP', 'Roboto Mono', monospace !important; 
+  font-family: inherit !important; 
   letter-spacing: 0.02em !important; 
 }
 
-/* Brand & Headers */
-h1, h2, h3, .brand, .kpi-val, div[data-testid="stMetricValue"] { 
+/* BRAND & HEADERS: Orbitron */
+.brand, h1, h2, h3, .kpi-val, .agent-label, div[data-testid="stMetricValue"], .orbitron { 
   font-family: 'Orbitron', sans-serif !important; 
-  letter-spacing: 0.05em !important;
+  letter-spacing: 0.05em !important; 
   text-transform: uppercase;
+}
+
+/* CAPTIONS: Orbitron for Pro look */
+.caption-text, div[data-testid="stCaptionContainer"] *, div[data-testid="stMarkdownContainer"] small {
+  font-family: 'Orbitron', sans-serif !important;
+  letter-spacing: 0.06em !important;
 }
 
 /* HIDE DEFAULTS */
 #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-div[data-testid="stSidebar"] { display: none; } 
+div[data-testid="stSidebar"] { display: none; }
 
 /* BRANDING */
 h1, h2, h3, .brand {
@@ -162,21 +169,18 @@ button:hover { border-color: var(--accent) !important; box-shadow: 0 0 10px rgba
 }
 
 /* BOXES */
-/* TOP LOG (Short) */
 .log-top {
   font-family: 'Roboto Mono', monospace !important; font-size: 11px !important; color: #cfcfcf !important;
   background: #050505 !important; border: 1px solid #333 !important; padding: 10px !important;
   margin: 8px 0 14px 0 !important; max-height: 110px !important; overflow-y: auto !important;
   white-space: pre-wrap !important; line-height: 1.45 !important;
 }
-/* MOBILE LOG (Long) */
 .log-mobile {
   font-family: 'Roboto Mono', monospace !important; font-size: 12px !important; color: #e6e6e6 !important;
   background: #050505 !important; border: 1px solid #333 !important; padding: 12px !important;
   max-height: 240px !important; overflow-y: auto !important;
   white-space: pre-wrap !important; line-height: 1.55 !important;
 }
-/* EXPANDER STYLE */
 div[data-testid="stExpander"] details { border: 1px solid #333 !important; background:#070707 !important; }
 div[data-testid="stExpander"] summary { font-family:'Roboto Mono', monospace !important; font-size:12px !important; color:#00f2fe !important; }
 div[data-testid="stExpander"] summary:hover { background:#0b0b0b !important; }
@@ -191,7 +195,8 @@ div[data-testid="stExpander"] summary:hover { background:#0b0b0b !important; }
     white-space: pre-wrap; 
 }
 .highlight { color: #00f2fe; font-weight: bold; } .highlight-neg { color: #ff0055; font-weight: bold; }
-.def-text { font-size: 10px; color: #888; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+.def-text { font-size: 11px; color: #888; margin-bottom: 12px; border-bottom: 1px solid #333; padding-bottom: 8px; line-height: 1.6; font-family: 'Orbitron', sans-serif !important; }
+.caption-text { font-size: 11px; color: #666; margin-top: 5px; font-family: 'Orbitron', sans-serif !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -267,6 +272,10 @@ def pct(x, fmt="%.1f"):
     if pd.isna(x): return "-"
     try: return (fmt % (float(x)*100)) + "%"
     except: return "-"
+
+def outlook_date_slots(days: List[int] = [7, 21, 35, 49, 63, 84]) -> List[str]:
+    base = datetime.now().date()
+    return [(base + timedelta(days=d)).strftime("%Y/%m/%d") for d in days]
 
 # ==========================================
 # 4. CORE ENGINES
@@ -380,26 +389,32 @@ def get_fundamental_data(ticker: str) -> Dict[str, Any]:
             "PBR": pbr, "PEG": i.get("pegRatio", np.nan), "Target": i.get("targetMeanPrice", np.nan),
             "Rec": i.get("recommendationKey", "N/A")
         }
-    except: return {}
+    except: return {"PRICE": np.nan, "MCap": np.nan, "PER": np.nan, "FwdPE": np.nan, "PBR": np.nan, "PEG": np.nan}
 
-# --- SELECT LARGEST SECTOR ---
 @st.cache_data(ttl=3600)
-def pick_largest_sector_by_mcap(sector_map: Dict[str,str]) -> Optional[str]:
-    tickers = list(sector_map.values())
+def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
+    out = {}
     try:
-        fd = fetch_fundamentals_batch(tickers).reset_index()
-        if "MCap" in fd.columns and fd["MCap"].notna().any():
-            best_ticker = fd.sort_values("MCap", ascending=False).iloc[0]["Ticker"]
-            inv = {v:k for k,v in sector_map.items()}
-            return inv.get(best_ticker)
+        cal = yf.Ticker(ticker).calendar
+        # yfinance calendar structure varies
+        if cal is not None:
+             # Check if it's a dict or df
+            if isinstance(cal, dict):
+                if 'Earnings Date' in cal:
+                    out["EarningsDate"] = str(cal['Earnings Date'][0])
+            elif isinstance(cal, pd.DataFrame):
+                 for k in ["Earnings Date", "EarningsDate"]:
+                    if k in cal.index:
+                        v = cal.loc[k].values
+                        out["EarningsDate"] = ", ".join([str(x)[:10] for x in v if str(x) != "nan"])
     except: pass
-    return None
+    return out
 
 # --- TEXT PROCESSING ---
 def clean_ai_text(text: str) -> str:
     text = text.replace("```text", "").replace("```", "")
     text = text.replace("**", "").replace('"', "").replace("'", "")
-    text = re.sub(r"(?m)^\s*text\s*$", "", text) # Remove solitary 'text' lines
+    text = re.sub(r"(?m)^\s*text\s*$", "", text)
     text = re.sub(r"(?m)^\s*#{2,}\s*", "", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
 
@@ -408,28 +423,28 @@ def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: flo
     body = m.group(1).strip() if m else ""
     if len(re.sub(r"[\s\(\)・\-−\n]", "", body)) >= 30: return text
 
-    # Market specific fallback
+    slots = outlook_date_slots()
     if "US" in market_key:
         events = [
-            "FOMC→ドット/会見で金利織り込みが再計算され、ハイPERが最も振れる",
-            "米CPI→前年比の鈍化/再加速でリスクオン/オフが切り替わる",
-            "雇用統計→賃金インフレが強いと長期金利上振れリスク",
-            "メガテック決算→ガイダンスで指数寄与が一気に動く",
-            "クレジットスプレッド→拡大は株の上値を抑える警戒サイン",
-            "指数リバランス/オプション需給→短期スパイクの温床"
+            f"FOMC({slots[1]})→金利織り込み再計算でハイPERの変動が増幅",
+            f"CPI/PCE({slots[0]})→インフレ鈍化ならリスクオン、再加速ならリスクオフ",
+            f"雇用統計({slots[0]})→賃金の粘着性が長期金利を左右",
+            f"主要決算({slots[2]})→ガイダンスで指数寄与が集中しやすい",
+            f"クレジット/流動性({slots[3]})→スプレッド拡大は株の上値抑制",
+            f"需給イベント({slots[4]})→オプション・リバランスで短期スパイク"
         ]
     else:
         events = [
-            "日銀会合→政策修正/発言で金利・円が同時に動きやすい",
-            "米金利と円相場→外需主導のセクターにダイレクト",
-            "決算シーズン→ガイダンスで強者集中が進みやすい",
-            "TOPIX/指数リバランス→需給歪みで短期変動が出やすい",
-            "四半期法人行動→自社株買い/増配が需給下支えになりやすい",
-            "商品市況→素材/輸送/機械のマージンに波及"
+            f"日銀会合({slots[1]})→金利と円が同時に動き、外需/内需の優劣が反転しやすい",
+            f"米金利・円相場({slots[0]})→輸出・インバウンドの感応度が高い",
+            f"主要決算({slots[2]})→通期見通し修正と株主還元が需給を決める",
+            f"指数リバランス({slots[3]})→需給歪みで短期変動が出やすい",
+            f"賃上げ・物価({slots[4]})→実質賃金で消費関連の相対が動く",
+            f"海外投資家フロー({slots[5]})→資金流入の継続性が地合いを規定"
         ]
-    
+
     fallback = "【今後3ヶ月のコンセンサス見通し】\n" + "\n".join([f"・{e}" for e in events]) + \
-               f"\n・強気条件：金利低下＋決算ガイダンス上振れが同時に進行（基調:{trend}）\n・弱気条件：金利上振れ＋ガイダンス下方修正が連鎖"
+               f"\n・強気条件：インフレ鎮静化＋業績ガイダンス上振れ（基調:{trend}）\n・弱気条件：金利再上昇＋ガイダンス下方修正の連鎖"
 
     if "【今後3ヶ月" in text:
         text = re.sub(r"【今後3ヶ月[^】]*】.*", fallback, text, flags=re.DOTALL)
@@ -460,8 +475,8 @@ def market_to_html(text: str) -> str:
 @st.cache_data(ttl=1800)
 def get_news_consolidated(ticker: str, name: str, market_key: str, limit_each: int = 10) -> Tuple[List[dict], str, int, Dict[str,int]]:
     news_items, context_lines = [], []
-    pos_words = ["増益", "最高値", "好感", "上昇", "自社株買い", "上方修正", "急騰", "beat", "high"]
-    neg_words = ["減益", "安値", "嫌気", "下落", "下方修正", "急落", "赤字", "miss", "low"]
+    pos_words = ["増益", "最高値", "好感", "上昇", "自社株買い", "上方修正", "急騰", "beat", "high", "jump"]
+    neg_words = ["減益", "安値", "嫌気", "下落", "下方修正", "急落", "赤字", "miss", "low", "drop"]
     sentiment_score = 0
     meta = {"yahoo":0, "google":0, "pos":0, "neg":0}
 
@@ -473,9 +488,11 @@ def get_news_consolidated(ticker: str, name: str, market_key: str, limit_each: i
             news_items.append({"title":t, "link":l, "pub":p, "src":"Yahoo"})
             if t:
                 meta["yahoo"] += 1
+                # Weight by recency (48h)
+                weight = 2 if (time.time() - p) < 172800 else 1
                 context_lines.append(f"- [Yahoo] {t}")
-                if any(w in t for w in pos_words): sentiment_score += 1; meta["pos"] += 1
-                if any(w in t for w in neg_words): sentiment_score -= 1; meta["neg"] += 1
+                if any(w in t for w in pos_words): sentiment_score += 1*weight; meta["pos"] += 1
+                if any(w in t for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
     except: pass
 
     # Google
@@ -497,13 +514,18 @@ def get_news_consolidated(ticker: str, name: str, market_key: str, limit_each: i
                 news_items.append({"title":t, "link":l, "pub":pub, "src":"Google"})
                 if t:
                     meta["google"] += 1
+                    weight = 2 if (time.time() - pub) < 172800 else 1
                     context_lines.append(f"- [Google] {t}")
-                    if any(w in t for w in pos_words): sentiment_score += 1; meta["pos"] += 1
-                    if any(w in t for w in neg_words): sentiment_score -= 1; meta["neg"] += 1
+                    if any(w in t for w in pos_words): sentiment_score += 1*weight; meta["pos"] += 1
+                    if any(w in t for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
     except: pass
 
     news_items.sort(key=lambda x: x["pub"], reverse=True)
     return news_items, "\n".join(context_lines[:15]), sentiment_score, meta
+
+def temporal_sanity_flags(text: str) -> List[str]:
+    bad = ["年末年始", "クリスマス", "夏休み", "お盆", "来年", "昨年末"]
+    return [w for w in bad if w in text]
 
 @st.cache_data(ttl=3600)
 def generate_ai_content(prompt_key: str, context: Dict) -> str:
@@ -511,10 +533,15 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
     
     models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
     p = ""
-    market_n = context.get('market_name', '')
+    market_n = context.get('market_name', 'Global')
     
+    slots = context.get("date_slots", [])
+    slot_line = " / ".join(slots) if slots else ""
+    today_str = datetime.now().strftime('%Y年%m月%d日')
+
     if prompt_key == "market":
         p = f"""
+        現在: {today_str} (この日付を基準に分析せよ)
         対象市場: {market_n} (これ以外の市場の話は禁止)
         期間:{context['s_date']}〜{context['e_date']}
         市場平均:{context['ret']:.2f}%
@@ -529,30 +556,36 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         1) 市場概況（材料→結果を因果で、数値必須）
         2) 【主な変動要因】（3〜6行、各行は必ず(+)または(-)で開始）
         3) 【今後3ヶ月のコンセンサス見通し】
-        - 90日以内に起きやすい具体イベント/予定を最大6つ列挙（例：FOMC、CPI、雇用統計、日銀会合、主要決算、MSCI/指数リバランス、期末需給）
-        - 各行は「イベント名→株価に効きやすい方向（上/下/ボラ拡大）→理由（1フレーズ）」の順
-        - 最後に条件分岐を2行：強気条件/弱気条件（抽象語禁止。金利・決算・需給の“具体トリガー”で書く）
-        - 一般論（景気が〜、不透明〜、様子見〜）は禁止
+        - 予定日は必ず次の候補日から選んで書け：{slot_line}
+        - 90日以内に起きやすい具体イベント/予定を最大6つ列挙
+        - 各行は「イベント名(YYYY/MM/DD)→株価に効きやすい方向→理由」
+        - 最後に強気/弱気の条件分岐
+        - この期間から外れる季節表現（年末年始、来年など）は禁止
         """
     elif prompt_key == "sector_debate":
         p = f"""
+        現在: {today_str}
         あなたは5名の専門エージェント。対象市場は{market_n}。
         対象セクター:{context['sec']}
         候補データ:
         {context['candidates']}
         ニュース（非構造）:
         {context.get('news','')}
+        セクターニュース要約: {context.get('sector_news','')}
 
         厳守ルール:
         - 文体は「だ・である」。です・ます調は禁止。
         - 各エージェントは最低8行以上。短文禁止。具体で書く。
-        - 定量の優先順位は「モメンタム/センチメント＞バリュエーション＞ファンダ」である。
-        - 「抽象語（不透明、堅調、注視、様子見）」は禁止。必ず何が起きるとどう動くかを書く。
+        - モメンタム（RS/Accel）とセンチメント（ニュース）を最重視せよ。
+        - 「抽象語（不透明、堅調、注視、様子見）」は禁止。
 
         タスク:
-        1) まず[SECTOR_OUTLOOK]で、当該セクターの3ヶ月見通しを2〜5行。イベント/需給/金利の具体トリガーを書く。
-        2) 次に各エージェントが、冒頭1文でセクター見通しを述べたうえで、候補を比較し結論を書く。
-        3) [JUDGE]は分量を特に厚くする（最低18行）。トップ1と次点2、回避1を明確に決め、比較表現で説得する。
+        1) まず冒頭に[SECTOR_OUTLOOK]タグで、セクター全体の見通し（{today_str}から3ヶ月）を宣言抜きで記述。
+        2) その後、各エージェントが「推奨銘柄（ロング）」と「回避銘柄（ショート）」を議論。
+        
+        [JUDGE]では、トップピック1銘柄と次点2銘柄を決定し、その論理的根拠を詳細（従来の5倍の分量）に記述せよ。
+        候補データ(candidates)は必ず引用し、比較（AよりBが良い/条件）で結論を出すこと。
+        ネガティブな銘柄があれば具体的に指摘せよ。
         
         出力フォーマット（タグ厳守）:
         [SECTOR_OUTLOOK] ...
@@ -565,31 +598,39 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         """
     elif prompt_key == "stock_report":
         p = f"""
+        現在: {today_str}
         銘柄:{context['name']} ({context['ticker']})
         基礎データ:{context['fund_str']}
         市場・セクター比較:{context['m_comp']}
         ニュース:{context['news']}
+        次回決算日(取得値): {context.get("earnings_date","-")}。これが'-'でない場合、監視ポイントに必ず含めよ。
         
         プロのアナリストレポートを作成せよ。文体は「だ・である」。
         記号(「**」や「""」)は使用禁止。
         「不明」「わからない」という言葉は禁止。データがない場合はその項目を黙ってスキップせよ。
         
-        1. 企業概要
-        2. 定量・バリュエーション評価（市場平均・セクター平均と比較して割安か？再評価余地は？）
-        3. 需給/センチメント
-        4. ニュース/非構造情報（事象→業績への含意）
-        5. 3ヶ月見通し（ベース/強気/弱気シナリオ）
-        6. 監視ポイント（決算・金利・為替等）
+        必ず次の順に出力（見出し固定）：
+        1) 定量サマリー（株価/時価総額/リターン/PER/PBR）
+        2) バリュエーション：市場平均・セクター平均との比較（割安か？）
+        3) 需給/センチメント（直近リターンから逆回転条件）
+        4) ニュース/非構造情報（事象→業績→3ヶ月株価ドライバー）
+        5) 3ヶ月見通し（ベース/強気/弱気シナリオ）
+        6) 監視ポイント（次の決算や金利等）
         """
 
-    for m in models:
-        try:
-            model = genai.GenerativeModel(m)
-            text = model.generate_content(p).text
-            return clean_ai_text(enforce_da_dearu_soft(text))
-        except Exception as e:
-            if "429" in str(e): time.sleep(1); continue
-    return "AI Unavailable"
+    # Retry Loop for Temporal Sanity
+    for _ in range(2):
+        for m in models:
+            try:
+                model = genai.GenerativeModel(m)
+                text = model.generate_content(p).text
+                text = clean_ai_text(enforce_da_dearu_soft(text))
+                if not temporal_sanity_flags(text):
+                    return text
+                log_system_event("Temporal sanity failed, retrying...", "WARN", "AI")
+            except Exception as e:
+                if "429" in str(e): time.sleep(1); continue
+    return text
 
 def parse_agent_debate(text: str) -> str:
     mapping = {
@@ -618,6 +659,7 @@ def parse_agent_debate(text: str) -> str:
             buffer = ""
         else: buffer += part
     
+    # Flush last
     if buffer and label:
         content = f"<div class='agent-content'>{buffer}</div>"
         if "outlook" in curr_cls:
@@ -633,7 +675,7 @@ def parse_agent_debate(text: str) -> str:
 def main():
     st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
     
-    # --- LOG CONSOLE (TOP FIXED & MOBILE EXPANDER) ---
+    # --- LOG CONSOLE (TOP FIXED) ---
     log_short = "\n".join(st.session_state.system_logs[-25:]) if st.session_state.system_logs else "No logs."
     cL1, cL2 = st.columns([0.8, 0.2])
     with cL1:
@@ -696,16 +738,7 @@ def main():
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
     _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
     
-    market_text = generate_ai_content("market", {
-        "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
-        "top": sdf.iloc[-1]["Sector"], "bot": sdf.iloc[0]["Sector"],
-        "market_name": m_cfg["name"], "headlines": market_context
-    })
-    market_text = enforce_market_format(market_text)
-    market_text = force_nonempty_outlook_market(market_text, regime, b_stats["Ret"], sdf.iloc[-1]['RS']-sdf.iloc[0]['RS'], market_key)
-    market_html = market_to_html(market_text)
-    
-    # Definition Header
+    # Definition Header (ORDER FIXED)
     s_score = clamp(m_sent, -10, 10)
     lbl = sentiment_label(s_score)
     spread = sdf.iloc[-1]['RS'] - sdf.iloc[0]['RS']
@@ -714,51 +747,49 @@ def main():
     <div class='market-box'>
     <div class='def-text'>
     <b>DEFINITIONS</b> | 
-    <b>Regime</b>: 200DMA判定 (Bull/Bear) | 
-    <b>Spread</b>: セクターRS最大−最小(pt) | 
-    <b>NewsSent</b>: 見出しキーワード命中加点(-10~+10) | 
-    <b>RS</b>: 相対リターン差
+    <b>Spread</b>: セクターRSの最大−最小(pt)。市場内で勝ち負けがどれだけ鮮明かを示す | 
+    <b>Regime</b>: 200DMA判定 (Bull/Bear)。中期トレンドの地合い | 
+    <b>NewsSent</b>: 見出しキーワード命中の合計(-10~+10)。短期の需給・期待変化 |
+    <b>RS</b>: 相対リターン差(pt)
     </div>
-    <b>MARKET PULSE ({s_date} - {e_date})</b><br>
+    <b class='orbitron'>MARKET PULSE ({s_date} - {e_date})</b><br>
     <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='highlight'>{s_score:+d}</span> ({lbl}) [Hit:{m_meta['pos']}/{m_meta['neg']}]</span><br><br>
-    {market_html}
-    </div>
-    """, unsafe_allow_html=True)
+    """ + market_to_html(force_nonempty_outlook_market(
+        enforce_market_format(generate_ai_content("market", {
+            "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
+            "top": sdf.iloc[-1]["Sector"], "bot": sdf.iloc[0]["Sector"],
+            "market_name": m_cfg["name"], "headlines": market_context,
+            "date_slots": outlook_date_slots()
+        })), regime, b_stats["Ret"], spread, market_key
+    )) + "</div>", unsafe_allow_html=True)
 
     # 2. Sector Rotation
     st.subheader(f"SECTOR ROTATION ({s_date} - {e_date})")
     
-    # Select Largest Sector by Default if not set
-    if not st.session_state.selected_sector:
-        largest = pick_largest_sector_by_mcap(m_cfg["sectors"])
-        if largest and largest in sdf["Sector"].values:
-            st.session_state.selected_sector = largest
-        else:
-            st.session_state.selected_sector = sdf.iloc[-1]["Sector"]
-
-    # Chart
     sdf["Label"] = sdf["Sector"] + " (" + sdf["Ret"].apply(lambda x: f"{x:+.1f}%") + ")"
+    
+    # DEFAULT SELECTION: Max Return Sector
+    if not st.session_state.selected_sector:
+        best_row = sdf.loc[sdf["Ret"].idxmax()]
+        st.session_state.selected_sector = best_row["Sector"]
+        log_system_event(f"Default sector: {st.session_state.selected_sector}", "INFO", "UI")
+
     colors = ["#333"] * len(sdf)
     if st.session_state.selected_sector in sdf["Sector"].values:
         idx = sdf[sdf["Sector"] == st.session_state.selected_sector].index[0]
         colors[sdf.index.get_loc(idx)] = "#00f2fe"
 
     fig = px.bar(sdf, x="RS", y="Label", orientation='h', title=f"Relative Strength ({lookback_key})")
-    fig.update_traces(
-        customdata=np.stack([sdf["Ret"]], axis=-1),
-        hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>",
-        marker_color=colors
-    )
+    fig.update_traces(customdata=np.stack([sdf["Ret"]], axis=-1), hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>", marker_color=colors)
     fig.update_layout(height=380, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
                       font_color='#e0e0e0', font_family="Orbitron", xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
-    st.plotly_chart(fig, use_container_width=True, key="sector_chart", config={'displayModeBar': False, 'staticPlot': True})
+    st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True, 'displayModeBar': False})
     
-    # Buttons
     st.write("SELECT SECTOR:")
     cols = st.columns(2)
     for i, row in enumerate(sdf.itertuples()):
         s = row.Sector
-        label = f"✅ {s}" if s == st.session_state.selected_sector else s
+        label = f"✅ {s} ({row.Ret:+.1f}%)" if s == st.session_state.selected_sector else f"{s} ({row.Ret:+.1f}%)"
         if cols[i%2].button(label, key=f"btn_{s}", use_container_width=True):
             st.session_state.selected_sector = s
             st.rerun()
@@ -825,21 +856,26 @@ def main():
     })
     st.markdown(parse_agent_debate(sec_ai_raw), unsafe_allow_html=True)
     
-    # EVIDENCE
+    # EVIDENCE TABLE (Always Visible)
     st.markdown("###### EVIDENCE (Top Candidates)")
-    st.caption("Apex: 投資魅力度 | RS: 相対リターン差(pt) | Ret: 期間リターン(%) | HighDist: 52週高値乖離(%) | PER/PBR: 負値除外")
+    st.caption(
+        "DEFINITIONS | Apex: zscore合成=weight_mom*z(RS)+(0.8-weight_mom)*z(Accel)+0.2*z(Ret) | "
+        "RS: Ret(銘柄)−Ret(市場平均) | Accel: 直近半期間リターン−(全期間リターン/2) | "
+        "HighDist: 直近価格の52週高値乖離(%) | MaxDD: 期間内最大ドローダウン(%) | "
+        "PER/PBR/ROE等: yfinance.Ticker().info（負のPER/PBRは除外、欠損は'-'）"
+    )
     ev_fund = fetch_fundamentals_batch(top3["Ticker"].tolist()).reset_index()
     ev_df = top3.merge(ev_fund, on="Ticker", how="left")
     for c in ["PER","PBR"]: ev_df[c] = ev_df[c].apply(lambda x: dash(x))
-    ev_df["ROE"] = ev_df["ROE"].apply(pct)
-    ev_df["RevGrow"] = ev_df["RevGrow"].apply(pct)
-    ev_df["OpMargin"] = ev_df["OpMargin"].apply(pct)
-    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Ret","HighDist","PER","PBR","ROE","RevGrow"]], hide_index=True, use_container_width=True)
+    for c in ["ROE","RevGrow","OpMargin"]: ev_df[c] = ev_df[c].apply(pct)
+    ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
+    
+    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
 
     # 5. Leaderboard
     st.markdown("##### LEADERBOARD")
+    st.caption("SOURCE & NOTES | Price: yfinance | Fundamentals: yfinance.Ticker().info | PER/PBR: 負値は除外 | ROE/RevGrow/OpMargin/Beta: 取得できる場合のみ表示")
     
-    # Fundamentals for Leaderboard (Top 30 by Apex -> Merge)
     tickers_for_fund = df.head(30)["Ticker"].tolist()
     with st.spinner("Fetching Fundamentals..."):
         rest = fetch_fundamentals_batch(tickers_for_fund).reset_index()
@@ -857,7 +893,6 @@ def main():
     
     df["MCapDisp"] = df["MCap"].apply(fmt_mcap)
     
-    # Format for display
     df_disp = df.copy()
     for c in ["PER", "PBR"]: df_disp[c] = df_disp[c].apply(lambda x: dash(x))
     for c in ["ROE", "RevGrow", "OpMargin"]: df_disp[c] = df_disp[c].apply(pct)
@@ -868,6 +903,7 @@ def main():
     event = st.dataframe(
         df_sorted[["Name", "Ticker", "MCapDisp", "ROE", "RevGrow", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
         column_config={
+            "Ticker": st.column_config.TextColumn("Code"),
             "MCapDisp": st.column_config.TextColumn("Market Cap"),
             "Apex": st.column_config.NumberColumn(format="%.2f"),
             "RS": st.column_config.NumberColumn("RS (pt)", format="%.2f"),
@@ -890,11 +926,11 @@ def main():
 
     st.divider()
     st.markdown(f"### 🦅 DEEP DIVE: {top['Name']}")
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    st.caption(f"Data Timestamp: {now_str} | Source: yfinance (PER/PBR exclude negatives)")
+    st.caption(f"Data Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Source: yfinance (PER/PBR exclude negatives)")
     
     news_items, news_context, _, _ = get_news_consolidated(top["Ticker"], top["Name"], market_key, limit_each=10)
     fund_data = get_fundamental_data(top["Ticker"])
+    ed = fetch_earnings_dates(top["Ticker"]).get("EarningsDate", "-")
     bench_fd = get_fundamental_data(bench)
     
     bench_per = dash(bench_fd.get("PER"))
@@ -906,13 +942,17 @@ def main():
 
     report_txt = generate_ai_content("stock_report", {
         "name": top["Name"], "ticker": top["Ticker"],
-        "fund_str": fund_str, "m_comp": m_comp, "news": news_context
+        "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
+        "earnings_date": ed
     })
     
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
         st.markdown(f"<div class='report-box'><b>ANALYST REPORT</b><br>{report_txt}</div>", unsafe_allow_html=True)
-        st.caption("PEER COMPARISON (Nearest Market Cap)")
+        st.caption(
+            "PEER LOGIC | Nearest Market Cap: |MCap(peer)−MCap(target)|が小さい順に抽出（同一セクター内） | "
+            "SOURCE: yfinance.Ticker().info（欠損は'-'）"
+        )
         try:
             target_mcap = top["MCap"] if pd.notna(top["MCap"]) else 0
             df_sorted["Dist"] = (df_sorted["MCap"] - target_mcap).abs()
