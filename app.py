@@ -1,12 +1,11 @@
 import streamlit as st
-# Import your app modules here
 import alphalens
 
 # -----------------------------------------------------
 # MAIN LAUNCHER CONFIG
 # -----------------------------------------------------
 st.set_page_config(
-    page_title="AlphaLens Suite",
+    page_title="AlphaLens Pro",
     layout="wide",
     initial_sidebar_state="collapsed",
     page_icon="🦅"
@@ -15,7 +14,6 @@ st.set_page_config(
 # -----------------------------------------------------
 # TABS FOR MULTI-APP
 # -----------------------------------------------------
-# Define your tabs here. Future apps can be added easily.
 t1, t2 = st.tabs(["ALPHALENS", "COMING SOON"])
 
 with t1:
