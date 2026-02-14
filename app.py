@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from google import genai
 import json, re, threading, random
+import time  # <--- これが抜けていました
 from io import StringIO
 from urllib.parse import quote_plus
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,7 +13,7 @@ import requests
 import xml.etree.ElementTree as ET
 
 # --- 1. SPECTRE DESIGN (TRUE TURBO) ---
-st.set_page_config(page_title="AlphaLens v7.8", layout="wide")
+st.set_page_config(page_title="AlphaLens v7.8.1", layout="wide")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;500&display=swap');
@@ -26,7 +27,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("ALPHALENS // TRUE.TURBO.v7.8")
+st.title("ALPHALENS // TRUE.TURBO.v7.8.1")
 
 # --- 2. CORE UTILITIES (THREAD-SAFE) ---
 api_key = st.secrets.get("GEMINI_API_KEY")
@@ -38,7 +39,7 @@ _thread_local = threading.local()
 def _get_session():
     if getattr(_thread_local, "session", None) is None:
         _thread_local.session = requests.Session()
-        _thread_local.session.headers.update({"User-Agent": "AlphaLens/7.8"})
+        _thread_local.session.headers.update({"User-Agent": "AlphaLens/7.8.1"})
     return _thread_local.session
 
 def to_f(val):
@@ -56,7 +57,7 @@ SECTOR_CATALOG = {
         "Financials": {"JPM":"JP Morgan","V":"Visa","MA":"Mastercard","BAC":"Bank of America","GS":"Goldman Sachs","MS":"Morgan Stanley","AXP":"Amex","BLK":"BlackRock","C":"Citigroup","USB":"USBancorp","PNC":"PNC","BK":"BNY Mellon","CME":"CME","SPGI":"S&P Global","MCO":"Moody's","PYPL":"PayPal","WFC":"Wells Fargo"},
         "Healthcare / Bio": {"LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","NVO":"Novo","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","TMO":"Thermo","BMY":"Bristol","AMGN":"Amgen","MDT":"Medtronic","BSX":"BostonSci","REGN":"Regeneron","ZTS":"Zoetis","SYK":"Stryker","DXCM":"Dexcom","ISRG":"Intuitive"},
         "Industrials / Defense": {"LMT":"Lockheed","RTX":"Raytheon","NOC":"Northrop","GD":"GenDynamics","BA":"Boeing","GE":"GE","HON":"Honeywell","CAT":"Caterpillar","DE":"Deere","ETN":"Eaton","MMM":"3M","EMR":"Emerson","ITW":"ITW","UPS":"UPS","FDX":"FedEx","WM":"WasteMgmt"},
-        "REITs / Real Estate": {"PLD":"Prologis","AMT":"AmericanTower","EQIX":"Equinix","PSA":"PublicStorage","O":"RealtyIncome","DLR":"DigitalRealty","VICI":"VICI","CCI":"CrownCastle","CBRE":"CBRE"},
+        "REITs / Real Estate": {"PLD":"Prologis","AMT":"AmericanTower","EQIX":"Equinix","PSA":"PublicStorage","O":"RealtyIncome","DLR":"DigitalRealty","VICI":"VICI","CCI":"CrownCastle","SBAC":"SBAC","CBRE":"CBRE"},
         "Energy / Utilities": {"XOM":"Exxon","CVX":"Chevron","COP":"Conoco","SLB":"Schlumberger","EOG":"EOG","KMI":"KinderMorgan","MPC":"Marathon","OXY":"Occidental","PSX":"Phillips66","HAL":"Halliburton","VLO":"Valero","NEE":"NextEra","DUKE":"Duke","SO":"SouthernCo"},
         "Consumer Staples": {"PG":"P&G","KO":"Coca-Cola","PEP":"PepsiCo","WMT":"Walmart","COST":"Costco","PM":"PhilipMorris","MO":"Altria","CL":"Colgate","KMB":"Kimberly","GIS":"GeneralMills","KHC":"KraftHeinz"},
         "Consumer Disc": {"HD":"HomeDepot","LOW":"Lowe's","NKE":"Nike","SBUX":"Starbucks","CMG":"Chipotle","BKNG":"Booking","MAR":"Marriott","MCD":"McDonald's","TJX":"TJX","TGT":"Target"},
@@ -65,7 +66,7 @@ SECTOR_CATALOG = {
     },
     "JP MARKET (CORE 200)": {
         "半導体/電子部品": {"8035":"東エレク","6857":"アドバンテ","6723":"ルネサス","6146":"ディスコ","6920":"レーザー","3436":"SUMCO","4063":"信越化","7735":"スクリン","6526":"ソシオネ","6963":"ローム","7751":"キヤノン","6981":"村田製","6762":"TDK","6861":"キーエンス","6954":"ファナック","6503":"三菱電機"},
-        "情報通信/ネット": {"9432":"NTT","9433":"KDDI","9434":"ソフトB","9984":"SBG","4755":"楽天G","3659":"ネクソン","4689":"LINEヤフー","3774":"IIJ","4385":"メルカリ","3923":"ラクス","9613":"NTTデータ","2121":"MIXI","9735":"セコム"},
+        "情報通信/ネット": {"9432":"NTT","9433":"KDDI","9434":"ソフトB","9984":"SBG","4755":"楽天G","3659":"ネクソン","4689":"LINEヤフー","3774":"IIJ","6098":"リクルート","4385":"メルカリ","3923":"ラクス","9613":"NTTデータ","2121":"MIXI","9735":"セコム"},
         "資本財/重工/防衛": {"7011":"三菱重工","7012":"川崎重工","7013":"IHI","6301":"小松","6367":"ダイキン","6361":"荏原","5631":"日製鋼","6273":"SMC","6504":"富士電機","6305":"日立建機","6113":"アマダ","6473":"ジェイテクト","6326":"クボタ"},
         "自動車/輸送機": {"7203":"トヨタ","7267":"ホンダ","6902":"デンソー","7201":"日産","7269":"スズキ","7272":"ヤマハ発","7261":"マツダ","7270":"SUBARU","7259":"アイシン","7205":"日野自","5108":"ブリヂストン"},
         "金融": {"8306":"三菱UFJ","8316":"三井住友","8411":"みずほ","8766":"東京海上","8591":"オリックス","8604":"野村HD","8725":"MS&AD","8308":"りそな","7186":"コンコルディア","8630":"SOMPO","8750":"第一生命","8309":"三井トラ"},
@@ -80,7 +81,7 @@ SECTOR_CATALOG = {
     }
 }
 
-# --- 4. THE TURBO ENGINE ---
+# --- 4. THE TURBO ENGINE (FIXED) ---
 
 def _stooq_candidates(t):
     base = t.replace(".", "-").lower()
@@ -102,12 +103,12 @@ def fetch_px_single(t, suffix, max_retry=2):
                             df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
                             return t, df.dropna(subset=["Date"]).set_index("Date").sort_index()
                 except: continue
+        # randomとtimeが必要だった箇所
         time.sleep((0.3 * (2**attempt)) + random.random()*0.1)
     return t, None
 
 @st.cache_data(ttl=3600)
 def fetch_px_batch(tickers, suffix):
-    # キャッシュを安定させるためにソートされたタプルを使用
     tickers = tuple(sorted(set(tickers)))
     results = {}
     with ThreadPoolExecutor(max_workers=10) as ex:
@@ -134,7 +135,6 @@ def get_market_pulse(universe_key, horizon):
     all_needed = []
     for gs in SECTOR_CATALOG[universe_key].values(): all_needed.extend(list(gs.keys())[:10])
     
-    # プログレスバーの実装
     prog_bar = st.progress(0, text="Fetching Pulse Samples...")
     batch_dfs = {}
     all_needed = list(set(all_needed))
@@ -174,7 +174,7 @@ fig_pulse = px.bar(pulse_df, x="Median", y="Group", orientation='h', color="Medi
                    color_continuous_scale="RdYlGn", hover_data=["WinRate", "N"], labels={"Median": "Median Return (%)"})
 st.plotly_chart(fig_pulse.update_layout(height=400, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
 
-# 深掘りセクション
+# 銘柄深掘セクション
 st.sidebar.markdown("---")
 group_name = st.sidebar.selectbox("GROUP", list(SECTOR_CATALOG[universe_name].keys()))
 span = st.sidebar.selectbox("HORIZON", ["3M", "1Y", "3Y"], index=1)
@@ -212,12 +212,11 @@ if st.sidebar.button("EXECUTE DEPTH SCAN"):
                 s_rs = r["rs"] if r["rs"] is not None else 0.0
                 r["score"] = round(s_mom*0.45 + (30-s_vol)*0.15 + s_rs*0.2 - abs(r["dd"] or 0)*0.2, 2)
             
-            # (以下、AIレポート等の表示ロジックは継続)
             st.markdown("### ALPHA ALERTS")
             c1, c2, c3, c4 = st.columns(4)
             c1.markdown(f"<div class='alert-card'><div class='metric-label'>ACCEL TOP</div><div class='metric-val'>{max(raw_results, key=lambda x: x['accel'])['ticker']}</div></div>", unsafe_allow_html=True)
             valid_rs = [r for r in raw_results if r["rs"] is not None]
-            c2.markdown(f"<div class='alert-card'><div class='metric-label'>RS TOP (pp)</div><div class='metric-val'>{max(valid_rs, key=lambda x: x['rs'])['ticker'] if valid_rs else 'N/A'}</div></div>", unsafe_allow_html=True)
+            c2.markdown(f"<div class='alert-card'><div class='metric-label'>RS TOP</div><div class='metric-val'>{max(valid_rs, key=lambda x: x['rs'])['ticker'] if valid_rs else 'N/A'}</div></div>", unsafe_allow_html=True)
             c3.markdown(f"<div class='alert-card'><div class='metric-label'>SECTOR RET</div><div class='metric-val'>{sector_ret:+.1f}%</div></div>", unsafe_allow_html=True)
             c4.markdown(f"<div class='alert-card'><div class='metric-label'>SUCCESS N</div><div class='metric-val'>{len(raw_results)}</div></div>", unsafe_allow_html=True)
 
