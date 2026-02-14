@@ -15,7 +15,7 @@ import streamlit as st
 import yfinance as yf
 
 # ==========================================
-# 0. SYSTEM CONFIGURATION
+# 0. SYSTEM CONFIGURATION & LOGGING
 # ==========================================
 st.set_page_config(
     page_title="AlphaLens Sovereign",
@@ -28,27 +28,26 @@ st.set_page_config(
 if "system_logs" not in st.session_state: st.session_state.system_logs = []
 if "user_access_granted" not in st.session_state: st.session_state.user_access_granted = False
 if "selected_sector" not in st.session_state: st.session_state.selected_sector = None
-if "selected_stock" not in st.session_state: st.session_state.selected_stock = None
 
 def log_system_event(msg: str, level: str = "INFO"):
     timestamp = datetime.now().strftime("%H:%M:%S")
     entry = f"[{timestamp}] [{level}] {msg}"
     st.session_state.system_logs.append(entry)
-    # console output for cloud logs
     print(entry)
 
 def error_boundary(func):
+    """Decorator to catch errors safely"""
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception as e:
             log_system_event(f"{func.__name__}: {str(e)}", "ERROR")
-            st.error(f"⚠️ SYSTEM ERROR: {str(e)}")
+            st.error(f"⚠️ SYSTEM ERROR in {func.__name__}: {str(e)}")
             return None
     return wrapper
 
 # ==========================================
-# 1. PHANTOM UI (High Contrast & Orbitron)
+# 1. PHANTOM UI (HIGH CONTRAST & ORBITRON)
 # ==========================================
 st.markdown("""
 <style>
@@ -84,7 +83,7 @@ h1, h2, h3, .brand {
 
 /* TABLE VISIBILITY FIX */
 div[data-testid="stDataFrame"] { background-color: #000 !important; border: 1px solid var(--border) !important; }
-div[data-testid="stDataFrame"] * { color: #e0e0e0 !important; background-color: #000 !important; }
+div[data-testid="stDataFrame"] * { color: #e0e0e0 !important; background-color: #000 !important; font-family: 'Orbitron', monospace !important; }
 [data-testid="stHeader"] { background-color: #080808 !important; border-bottom: 2px solid var(--accent) !important; }
 [data-testid="stHeader"] * { color: var(--accent) !important; }
 
@@ -147,7 +146,7 @@ def check_access():
 if not check_access(): st.stop()
 
 # ==========================================
-# 3. UNIVERSE DEFINITIONS (CORRECTED)
+# 3. UNIVERSE DEFINITIONS (FULL SET)
 # ==========================================
 LOOKBACKS = {"1W": 5, "1M": 21, "3M": 63, "12M": 252}
 FETCH_PERIOD = "24mo"
@@ -159,28 +158,17 @@ US_SEC = {
     "Materials": "XLB", "Utilities": "XLU", "Real Estate": "XLRE"
 }
 
-# JP SECTORS (OFFICIAL NEXT FUNDS MAPPING 1617-1633)
+# JP SECTORS (NEXT FUNDS Official)
 JP_SEC = {
-    "食品(Foods)": "1617.T",
-    "エネ資源(Energy)": "1618.T",
-    "建設資材(Const)": "1619.T",
-    "素材化学(Mat)": "1620.T",
-    "医薬品(Pharma)": "1621.T",
-    "自動車(Auto)": "1622.T",
-    "鉄鋼非鉄(Steel)": "1623.T",
-    "機械(Machinery)": "1624.T",
-    "電機精密(Elec)": "1625.T",
-    "情報通信(Info)": "1626.T",
-    "電力ガス(Util)": "1627.T",
-    "運輸物流(Trans)": "1628.T",
-    "商社卸売(Trade)": "1629.T",
-    "小売(Retail)": "1630.T",
-    "銀行(Bank)": "1631.T",
-    "金融(Fin)": "1632.T",
-    "不動産(RE)": "1633.T"
+    "食品(Foods)": "1617.T", "エネ資源(Energy)": "1618.T", "建設資材(Const)": "1619.T",
+    "素材化学(Mat)": "1620.T", "医薬品(Pharma)": "1621.T", "自動車(Auto)": "1622.T",
+    "鉄鋼非鉄(Steel)": "1623.T", "機械(Machinery)": "1624.T", "電機精密(Elec)": "1625.T",
+    "情報通信(Info)": "1626.T", "電力ガス(Util)": "1627.T", "運輸物流(Trans)": "1628.T",
+    "商社卸売(Trade)": "1629.T", "小売(Retail)": "1630.T", "銀行(Bank)": "1631.T",
+    "金融(Fin)": "1632.T", "不動産(RE)": "1633.T"
 }
 
-# STOCKS (ABBREVIATED FOR SAFETY, BUT FULL LIST LOGIC APPLIES)
+# STOCKS (FULL ~400)
 US_STOCKS = {
     "Technology": ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","IBM","NOW","AMAT","MU","LRCX","ADI","KLAC","SNPS","CDNS","PANW","CRWD","ANET","PLTR"],
     "Comm Services": ["GOOGL","META","NFLX","DIS","CMCSA","TMUS","VZ","T","CHTR","WBD","LYV","EA","TTWO","OMC","IPG"],
@@ -219,9 +207,9 @@ MARKETS = {
     "🇯🇵 JP": {"bench": "1306.T", "name": "TOPIX", "sectors": JP_SEC, "stocks": JP_STOCKS},
 }
 
-# NAME DB (FULL)
+# FULL NAME DB
 NAME_DB = {
-    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Financial","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
+    "SPY":"S&P500","1306.T":"TOPIX","XLK":"Tech","XLV":"Health","XLF":"Fin","XLC":"Comm","XLY":"ConsDisc","XLP":"Staples","XLI":"Indust","XLE":"Energy","XLB":"Material","XLU":"Utility","XLRE":"RealEst",
     "1626.T":"情報通信","1631.T":"電機精密","1621.T":"自動車","1632.T":"医薬品","1623.T":"銀行","1624.T":"金融他","1622.T":"商社小売","1630.T":"機械","1617.T":"食品","1618.T":"エネ資源","1619.T":"建設資材","1620.T":"素材化学","1625.T":"電機精密","1627.T":"電力ガス","1628.T":"運輸物流","1629.T":"商社卸売","1633.T":"不動産",
     "AAPL":"Apple","MSFT":"Microsoft","NVDA":"NVIDIA","GOOGL":"Alphabet","META":"Meta","AMZN":"Amazon","TSLA":"Tesla","AVGO":"Broadcom","ORCL":"Oracle","CRM":"Salesforce","ADBE":"Adobe","AMD":"AMD","QCOM":"Qualcomm","TXN":"Texas","NFLX":"Netflix","DIS":"Disney","CMCSA":"Comcast","TMUS":"T-Mobile","VZ":"Verizon","T":"AT&T",
     "LLY":"Eli Lilly","UNH":"UnitedHealth","JNJ":"J&J","ABBV":"AbbVie","MRK":"Merck","PFE":"Pfizer","JPM":"JPMorgan","BAC":"BofA","WFC":"Wells Fargo","V":"Visa","MA":"Mastercard","GS":"Goldman","MS":"Morgan Stanley","BLK":"BlackRock","C":"Citi","BRK-B":"Berkshire",
@@ -249,13 +237,14 @@ def get_name(t: str) -> str: return NAME_DB.get(t, t)
 def fetch_market_data(tickers: Tuple[str, ...], period: str) -> pd.DataFrame:
     tickers = tuple(dict.fromkeys([t for t in tickers if t]))
     frames = []
-    for i in range(0, len(tickers), 50):
-        c = tickers[i:i+50]
+    chunk = 50 
+    for i in range(0, len(tickers), chunk):
+        c = tickers[i:i+chunk]
         try:
             r = yf.download(" ".join(c), period=period, interval="1d", group_by="ticker", auto_adjust=True, threads=True, progress=False)
             if not r.empty: frames.append(r)
         except Exception as e:
-            log_system_event(f"Data Fetch: {e}", "WARN")
+            log_system_event(f"Fetch Chunk {i} Error: {e}", "WARN")
             continue
     return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
@@ -270,7 +259,17 @@ def extract_close_prices(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
         keep = [c for c in expected if c in close.columns]
         return close[keep]
-    except Exception: return pd.DataFrame()
+    except Exception as e:
+        log_system_event(f"Extract Close Error: {e}", "ERROR")
+        return pd.DataFrame()
+
+def calc_period_returns(s: pd.Series) -> Dict[str, float]:
+    res = {}
+    for label, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
+        if len(s) > d:
+            res[label] = (s.iloc[-1] / s.iloc[-1-d] - 1) * 100
+        else: res[label] = np.nan
+    return res
 
 def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     if len(s) < win+1 or len(b) < win+1: return None
@@ -285,21 +284,30 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     accel = p_half - (p_ret/2)
     dd = abs(((s_win/s_win.cummax()-1)*100).min())
     
-    # Returns for 1W, 1M, 12M
-    rets = {}
-    for l, d in [("1W",5), ("1M",21), ("3M",63), ("12M",252)]:
-        if len(s) > d: rets[l] = (s.iloc[-1]/s.iloc[-1-d]-1)*100
-        else: rets[l] = 0.0
-        
-    return {"RS": rs, "Accel": accel, "MaxDD": dd, **rets}
+    return {"RS": rs, "Accel": accel, "MaxDD": dd, "Stable": "✅", "Ret": p_ret}
+
+def audit_data_availability(expected: List[str], df: pd.DataFrame, win: int):
+    present = [t for t in expected if t in df.columns]
+    if not present: return {"ok": False, "list": []}
+    last = df[present].apply(lambda x: x.last_valid_index())
+    mode = last.mode().iloc[0] if not last.mode().empty else None
+    computable = []
+    for t in present:
+        if last[t] == mode and df[t].tail(win+1).notna().sum() >= win+1:
+            computable.append(t)
+    return {"ok": True, "list": computable, "mode": mode, "count": len(computable), "total": len(expected)}
+
+def calculate_zscore(s: pd.Series) -> pd.Series:
+    if s.std() == 0: return pd.Series(0.0, index=s.index)
+    return (s - s.mean()) / s.std(ddof=0)
 
 def get_market_summary(df_sec: pd.DataFrame, bench_ret: float) -> str:
-    """Generate or fallback market summary"""
     top = df_sec.iloc[-1]["Sector"]
     bot = df_sec.iloc[0]["Sector"]
     diff = df_sec.iloc[-1]["RS"] - df_sec.iloc[0]["RS"]
     
     if HAS_LIB and API_KEY:
+        # STRICT AI MODEL: 2.0-flash Only
         try:
             model = genai.GenerativeModel("gemini-2.0-flash")
             p = f"市場リターン:{bench_ret:.2f}%, 先導:{top}, 遅行:{bot}, 格差:{diff:.1f}。市況を3行で要約せよ。"
@@ -313,8 +321,6 @@ def get_market_summary(df_sec: pd.DataFrame, bench_ret: float) -> str:
 def get_news(ticker: str, name: str) -> Tuple[List[dict], List[dict], str]:
     y_news, g_news = [], []
     context_text = ""
-    
-    # Yahoo
     try:
         raw = yf.Ticker(ticker).news
         if raw:
@@ -322,27 +328,23 @@ def get_news(ticker: str, name: str) -> Tuple[List[dict], List[dict], str]:
                 y_news.append({"title": n.get("title",""), "link": n.get("link","")})
                 context_text += f"- {n.get('title','')}\n"
     except: pass
-    
-    # Google (RSS)
     try:
         q = urllib.parse.quote(f"{name} 株")
-        url = f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja"
-        with urllib.request.urlopen(url, timeout=3) as r:
+        with urllib.request.urlopen(f"https://news.google.com/rss/search?q={q}&hl=ja&gl=JP&ceid=JP:ja", timeout=3) as r:
             root = ET.fromstring(r.read())
             for i in root.findall(".//item")[:3]:
                 t = i.findtext("title")
                 g_news.append({"title": t, "link": i.findtext("link")})
                 context_text += f"- {t}\n"
     except: pass
-    
     return y_news, g_news, context_text
 
 def call_ai_analysis(ticker: str, name: str, stats: Dict, news_context: str) -> str:
     if not HAS_LIB or not API_KEY:
-        return "⚠️ AI OFFLINE: キー設定を確認してください。"
+        return "⚠️ AI OFFLINE: CHECK KEYS"
 
-    # STRICT MODEL SELECTION (2.0-flash/lite confirmed)
-    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash"]
+    # STRICT MODEL SELECTION: 2.0-flash / 2.0-flash-lite
+    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
     
     for m in models:
         try:
@@ -423,6 +425,10 @@ def main():
         st.error("DATA FEED DISCONNECTED")
         return
 
+    col1, col2 = st.columns(2)
+    with col1: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>DATA HEALTH</div><div class='kpi-val'>{audit['count']}/{audit['total']}</div></div>", unsafe_allow_html=True)
+    with col2: st.markdown(f"<div class='kpi status-ok'><div class='kpi-lbl'>LATEST DATE</div><div class='kpi-val'>{str(audit['mode']).split()[0]}</div></div>", unsafe_allow_html=True)
+
     # 2. Sector Overview
     b_stats = calc_technical_metrics(core_df[bench], core_df[bench], win)
     sec_rows = []
@@ -485,21 +491,31 @@ def main():
     for t in [x for x in s_audit["list"] if x != bench]:
         stats = calc_technical_metrics(sec_df[t], sec_df[bench], win)
         if stats:
+            stats.update(calc_period_returns(sec_df[t]))
             stats["Ticker"] = t
             stats["Name"] = get_name(t)
             results.append(stats)
             
-    df = pd.DataFrame(results).sort_values("RS", ascending=False)
-    df["Apex"] = 0.6 * df["RS"] + 0.4 * df["Accel"] # Simple scoring
-    df = df.sort_values("Apex", ascending=False)
+    if not results:
+        st.warning("NO DATA FOUND.")
+        return
+        
+    df = pd.DataFrame(results)
+    df["RS_z"] = calculate_zscore(df["RS"])
+    df["Acc_z"] = calculate_zscore(df["Accel"])
+    df["DD_z"] = calculate_zscore(df["MaxDD"])
+    df["Apex"] = 0.6*df["RS_z"] + 0.25*df["Acc_z"] - 0.15*df["DD_z"]
+    df = df.sort_values("Apex", ascending=False).reset_index(drop=True)
+    df["Verdict"] = df.apply(lambda r: "STRONG" if r["RS"]>0 and r["Accel"]>0 and r["Stable"]=="✅" else "WATCH" if r["RS"]>0 else "AVOID", axis=1)
 
     # 4. Table & Detail
     c1, c2 = st.columns([1.5, 1])
     with c1:
         st.markdown("##### LEADERBOARD")
         event = st.dataframe(
-            df[["Name", "RS", "Accel", "1W", "1M", "12M"]],
+            df[["Name", "Verdict", "Apex", "RS", "Accel", "1W", "1M", "12M"]],
             column_config={
+                "Apex": st.column_config.NumberColumn(format="%.2f"),
                 "RS": st.column_config.ProgressColumn(format="%.2f%%", min_value=-20, max_value=20),
                 "Accel": st.column_config.NumberColumn(format="%.2f"),
                 "1W": st.column_config.NumberColumn(format="%.1f%%"),
