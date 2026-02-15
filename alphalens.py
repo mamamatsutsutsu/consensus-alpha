@@ -220,19 +220,78 @@ def fetch_fundamentals_batch(tickers: List[str]) -> pd.DataFrame:
 
 @st.cache_data(ttl=3600)
 def get_fundamental_data(ticker: str) -> Dict[str, Any]:
+    """Fundamentals snapshot (best-effort).
+    yfinance.info can be empty; fallback to fast_info where possible.
+    Always returns display-safe keys used by the UI.
+    """
+    out: Dict[str, Any] = {
+        "Name": ticker,
+        "Sector": "-",
+        "Industry": "-",
+        "MCap": np.nan,
+        "PER": np.nan,
+        "FwdPE": np.nan,
+        "PBR": np.nan,
+        "PEG": np.nan,
+        "ROE": np.nan,
+        "RevGrow": np.nan,
+        "OpMargin": np.nan,
+        "Beta": np.nan,
+        "Website": None,
+        "Summary": "-",
+        "Currency": None,
+    }
     try:
-        i = yf.Ticker(ticker).info
-        pe = i.get("trailingPE", np.nan)
-        if isinstance(pe, (int, float)) and pe < 0: pe = np.nan
-        pbr = i.get("priceToBook", np.nan)
-        if isinstance(pbr, (int, float)) and pbr < 0: pbr = np.nan
-        
-        return {
-            "MCap": i.get("marketCap", 0), "PER": pe, "FwdPE": i.get("forwardPE", np.nan),
-            "PBR": pbr, "PEG": i.get("pegRatio", np.nan), "Target": i.get("targetMeanPrice", np.nan),
-            "Rec": i.get("recommendationKey", "N/A"), "Website": i.get("website", None)
-        }
-    except: return {"PRICE": np.nan, "MCap": np.nan, "PER": np.nan, "FwdPE": np.nan, "PBR": np.nan, "PEG": np.nan}
+        t = yf.Ticker(ticker)
+        info = {}
+        try:
+            info = t.info or {}
+        except Exception:
+            info = {}
+        fi = {}
+        try:
+            fi = getattr(t, "fast_info", {}) or {}
+        except Exception:
+            fi = {}
+
+        name = info.get("shortName") or info.get("longName") or out["Name"]
+        if isinstance(name, str) and name.strip():
+            out["Name"] = name.strip()
+
+        out["Sector"] = info.get("sector") or out["Sector"]
+        out["Industry"] = info.get("industry") or out["Industry"]
+
+        mcap = info.get("marketCap") or fi.get("market_cap")
+        if isinstance(mcap, (int, float)) and mcap > 0:
+            out["MCap"] = mcap
+
+        pe = info.get("trailingPE", np.nan)
+        if isinstance(pe, (int, float)) and pe < 0:
+            pe = np.nan
+        out["PER"] = pe
+
+        fpe = info.get("forwardPE", np.nan)
+        if isinstance(fpe, (int, float)) and fpe < 0:
+            fpe = np.nan
+        out["FwdPE"] = fpe
+
+        pbr = info.get("priceToBook", np.nan)
+        if isinstance(pbr, (int, float)) and pbr < 0:
+            pbr = np.nan
+        out["PBR"] = pbr
+
+        out["PEG"] = info.get("pegRatio", np.nan)
+        out["ROE"] = info.get("returnOnEquity", np.nan)
+        out["RevGrow"] = info.get("revenueGrowth", np.nan)
+        out["OpMargin"] = info.get("operatingMargins", np.nan)
+        out["Beta"] = info.get("beta", np.nan)
+        out["Website"] = info.get("website", None)
+        out["Summary"] = info.get("longBusinessSummary") or info.get("businessSummary") or out["Summary"]
+        out["Currency"] = info.get("currency") or fi.get("currency") or out["Currency"]
+    except Exception:
+        pass
+    return out
+
 
 def pick_fund_row(cand_fund: pd.DataFrame, ticker: str) -> Dict[str, Any]:
     try:
@@ -258,6 +317,107 @@ def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
     except: pass
     return out
 
+
+# --- Company Profile & AI Overview ---
+
+@st.cache_data(ttl=24*3600)
+def get_company_profile(ticker: str) -> Dict[str, Any]:
+    """Return a stable subset of yfinance profile fields. Falls back to fast_info when possible."""
+    out: Dict[str, Any] = {}
+    try:
+        tk = yf.Ticker(ticker)
+        info = {}
+        try:
+            info = tk.info or {}
+        except Exception:
+            info = {}
+        fast = {}
+        try:
+            fast = getattr(tk, "fast_info", {}) or {}
+        except Exception:
+            fast = {}
+
+        def _pick(*keys):
+            for k in keys:
+                v = info.get(k)
+                if v not in (None, "", "nan"):
+                    return v
+            return None
+
+        out["Name"] = _pick("longName", "shortName") or fast.get("shortName") or ticker
+        out["Sector"] = _pick("sector") or "-"
+        out["Industry"] = _pick("industry") or "-"
+        out["Country"] = _pick("country") or "-"
+        out["Website"] = _pick("website") or None
+        out["MarketCap"] = _pick("marketCap") or fast.get("market_cap") or fast.get("marketCap") or None
+        out["BusinessSummary"] = (_pick("longBusinessSummary") or "").strip()
+    except Exception:
+        out = {"Name": ticker, "Sector": "-", "Industry": "-", "Country": "-", "Website": None, "MarketCap": None, "BusinessSummary": ""}
+    return out
+
+@st.cache_data(ttl=24*3600, show_spinner=False)
+def ai_company_summary_cached(name: str, facts: Dict[str, Any], nonce: int = 0) -> str:
+    """Generate a conservative company summary from FACTS only. Cached for speed."""
+    if not HAS_LIB or not API_KEY:
+        return ""
+    try:
+        m = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = (
+            "あなたは金融機関向け商用アプリの編集者。\n"
+            "以下のFACTS以外の新しい事実を追加してはいけない。推測で固有名詞（製品名/顧客/競合/地域）を増やさない。\n"
+            "日本語で3〜5文、簡潔に会社の事業概要を要約せよ。断定を避け『〜とみられる/可能性』程度に留める。\n"
+            "FACTSが乏しい場合は、Sector/Industry/Website/MarketCapの範囲で一般的な表現に留める（具体例を作らない）。\n"
+            "出力は本文のみ。\n"
+            f"FACTS: {facts}"
+        )
+        txt = m.generate_content(prompt).text or ""
+        return clean_ai_text(txt)
+    except Exception:
+        return ""
+
+def build_company_overview(profile: Dict[str, Any], enable_ai: bool, nonce: int = 0) -> Dict[str, Any]:
+    name = str(profile.get("Name") or "-")
+    sector = str(profile.get("Sector") or "-")
+    industry = str(profile.get("Industry") or "-")
+    country = str(profile.get("Country") or "-")
+    website = profile.get("Website") or None
+    mcap = profile.get("MarketCap")
+    mcap_disp = dash(mcap, "%.0f")
+    if isinstance(mcap, (int, float)) and mcap:
+        if mcap >= 1e12:
+            mcap_disp = f"{mcap/1e12:.1f}T"
+        elif mcap >= 1e9:
+            mcap_disp = f"{mcap/1e9:.1f}B"
+        elif mcap >= 1e6:
+            mcap_disp = f"{mcap/1e6:.0f}M"
+
+    summary = str(profile.get("BusinessSummary") or "").strip()
+    # If yfinance has no summary, ask AI to produce a conservative one from facts only
+    if enable_ai:
+        facts = {
+            "name": name,
+            "sector": sector,
+            "industry": industry,
+            "country": country,
+            "website": website or "-",
+            "marketCap": mcap_disp,
+            "yfinance_summary": (summary[:800] if summary else "-"),
+        }
+        ai_sum = ai_company_summary_cached(name, facts, nonce=nonce)
+        if ai_sum:
+            summary = ai_sum
+
+    if not summary:
+        summary = "-"
+
+    overview_html = f"Sector:{sector} | Industry:{industry} | MCap:{mcap_disp} | Country:{country}"
+    overview_plain = f"Name:{name}\nSector:{sector}\nIndustry:{industry}\nMCap:{mcap_disp}\nCountry:{country}\nWebsite:{website or '-'}\nSummary:{summary}"
+    return {
+        "name": name, "sector": sector, "industry": industry, "country": country,
+        "website": website, "mcap": mcap, "mcap_disp": mcap_disp,
+        "summary": summary, "overview_html": overview_html, "overview_plain": overview_plain
+    }
+
 # --- AI & TEXT ---
 API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 try:
@@ -280,6 +440,9 @@ def clean_ai_text(text: str) -> str:
     for w in bad: text = re.sub(rf"(?m)^.*{re.escape(w)}.*$\n?", "", text)
     # remove stray backreference artifacts like \\1 or ASCII SOH
     text = text.replace('\\1', '').replace('\x01', '')
+    # remove any leading backslash-number artifacts (e.g., \1, \2) that may leak from regex groups
+    text = re.sub(r'(?m)^\s*\\\d+\s*', '', text)
+    text = text.replace('\u0001', '')
     text = re.sub(r'(?m)^\s*\\1', '', text)
     return re.sub(r"\n{2,}", "\n", text).strip()
 
@@ -787,6 +950,42 @@ def plot_relative_1y(ticker: str, sector_etf: str, bench: str, market_key: str):
     except Exception as e:
         st.info("Price comparison chart unavailable.")
 
+
+def _compress_bullets_in_views(content: str) -> str:
+    """Flatten bullet lines into compact prose inside 'Sector view:' / 'Stock pick:' blocks."""
+    try:
+        lines = content.splitlines()
+        norm_lines = []
+        for ln in lines:
+            ln2 = re.sub(r'^[\s\t]*[-•]+\s*', '', ln).strip()
+            norm_lines.append(ln2)
+        content2 = "\n".join(norm_lines)
+
+        chunks = re.split(r'(?mi)^(Sector view:|Stock pick:)', content2)
+        if len(chunks) <= 1:
+            return " ".join([x for x in norm_lines if x]).strip()
+
+        out = []
+        i = 0
+        while i < len(chunks):
+            part = chunks[i]
+            if part.lower().startswith("sector view:") or part.lower().startswith("stock pick:"):
+                heading = part.strip()
+                body = (chunks[i+1] if i+1 < len(chunks) else "").strip()
+                body_lines = [b.strip() for b in body.splitlines() if b.strip()]
+                body_lines = [re.sub(r'(?mi)^(Triggers?|トリガー)\s*[:：]\s*', '', b).strip() for b in body_lines]
+                body_txt = " ".join([b for b in body_lines if b])
+                out.append(f"{heading} {body_txt}".strip())
+                i += 2
+            else:
+                if part.strip():
+                    out.append(part.strip())
+                i += 1
+        return "\n".join(out).strip()
+    except Exception:
+        return content
+
+
 def parse_agent_debate(text: str) -> str:
     """Parse tagged multi-agent debate and render in a fixed, pro layout.
     Always enforce: SECTOR_OUTLOOK -> (agents...) -> JUDGE (styled).
@@ -849,6 +1048,11 @@ def parse_agent_debate(text: str) -> str:
         content = re.sub(r"\n{3,}", "\n\n", content)
         # remove stray backreference artifacts (\\1) and SOH that sometimes leak from regex replacement
         content = re.sub(r"(?m)^\s*(?:\\\\1|\x01)\s*", "", content)
+        # remove any leading backslash-number artifacts like \1 that may appear at line starts
+        content = re.sub(r'(?m)^\s*\\\d+\s*', '', content)
+        # RISK block: flatten bullet lists into prose inside Sector view / Stock pick
+        if tag == '[RISK]':
+            content = _compress_bullets_in_views(content)
         content = content.replace("\\1", "").replace("\x01", "")
         # emphasize required sub-structure if present
         content = re.sub(r"(?m)^(Sector view:\s*)", r"<span class=\'subhead\'>\1</span>", content)
@@ -998,6 +1202,33 @@ button{
 .element-container{ margin-bottom: .35rem !important; }
 .stMarkdown p{ margin: .25rem 0 !important; }
 
+
+/* Controls: unify buttons + select boxes */
+div.stButton > button, button[kind="primary"]{
+  background: linear-gradient(90deg, rgba(0,242,254,0.22), rgba(255,0,85,0.14)) !important;
+  border: 1px solid rgba(0,242,254,0.45) !important;
+  color: var(--text) !important;
+  border-radius: 14px !important;
+  padding: 0.55rem 0.85rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em !important;
+  box-shadow: 0 0 18px rgba(0,242,254,0.12) !important;
+}
+div.stButton > button:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 0 24px rgba(0,242,254,0.22) !important;
+}
+div.stButton > button:active{
+  transform: translateY(0px);
+  box-shadow: 0 0 10px rgba(255,0,85,0.18) !important;
+}
+div[data-baseweb="select"] > div{
+  background: rgba(17,17,17,0.85) !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  border-radius: 14px !important;
+}
+div[data-baseweb="select"] span{ color: var(--text) !important; }
 </style>
 """, unsafe_allow_html=True)
     
