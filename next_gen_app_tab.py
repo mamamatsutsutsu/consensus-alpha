@@ -1,19 +1,19 @@
-# THEMELENS — AI-first Theme Portfolio Builder (Gemini) v16
+# THEMELENS — AI-first Theme Portfolio Builder (Gemini) v17
 # -----------------------------------------------------------------------------
-# What this version fixes / adds (per user request):
-# - STRICT COUNT: Draft universe MUST produce exactly (TopN + 20) tickers (capped),
-#   with prompt enforcement + automatic "top-up" prompt if count is short.
-# - AUTO PIPELINE: One-click "Build" runs:
-#     1) Universe tickers (text/plain, strict count)
-#     2) Fill required columns for the universe (JSON, chunked)
-#     3) Validate month-end market cap (bounded) and rank TopN by Theme Market Cap
-#     4) Refine TopN: add TRR sources + summaries (best-effort)
-# - ELAPSED SECONDS: Live counter keeps running across stages; on completion it freezes and stays visible.
-# - TABLE UX: remove redundant leftmost row index; display starts from Rank.
-# - Robustness: key-drift tolerant JSON parsing, fallback to ticker extraction, second-call tickers-only.
+# Requested UX + correctness improvements:
+# - China region includes Taiwan (display: "China (incl. Taiwan)")
+# - Theme input: stylish English helper text above the field
+# - Top N max = 20
+# - Do NOT show Draft Universe (N+20) table
+# - After 60s: show "too slow, you may cancel" message
+# - Definitions: remove definitions table; show a stylish definition block ABOVE the ranked list area
+# - TRR must exist: strengthen prompts + add automatic TRR repair pass for missing/zero TRR
+# - Deliverable table should be filled:
+#   * Fill company/exchange/listed-country from yfinance + ticker suffix inference if AI missing
+#   * Ensure TRR exists for ranking (best-effort estimate if no disclosure)
 #
 # Deliverable: ranked list by Theme Market Cap = Market Cap (USD, month-end target; validated if possible) × TRR.
-# TRR is evidence-backed when possible; otherwise explicitly marked as estimates.
+# TRR is evidence-backed when possible; otherwise explicitly marked as estimated.
 
 from __future__ import annotations
 
@@ -72,8 +72,15 @@ div[data-testid="stAppViewContainer"] .block-container{
   font-family:Orbitron, ui-sans-serif, system-ui;
   letter-spacing:0.14em;
   color:var(--al-cyan);
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
   font-size: 28px;
+}
+
+.tl-subtitle{
+  opacity:0.78;
+  letter-spacing:0.03em;
+  margin: 0 0 16px 0;
+  font-size: 13px;
 }
 
 .tl-panel{
@@ -82,6 +89,33 @@ div[data-testid="stAppViewContainer"] .block-container{
   background: var(--al-bg);
   backdrop-filter: blur(10px);
   padding: 14px 14px;
+}
+
+.tl-hero{
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.42);
+  padding: 14px 14px;
+}
+
+.tl-hero .kicker{
+  font-family:Orbitron, ui-sans-serif, system-ui;
+  letter-spacing:0.10em;
+  color: var(--al-cyan);
+  font-weight: 800;
+  font-size: 12px;
+}
+.tl-hero .body{
+  opacity:0.86;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.tl-hero .fine{
+  opacity:0.65;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.40;
 }
 
 div[data-baseweb="input"] input,
@@ -202,7 +236,7 @@ def fmt_money(x: Any) -> str:
 
 
 def _region_definition(region: RegionMode) -> str:
-    # NOTE: Global must include mega-cap semiconductor markets (Taiwan/Korea) to avoid missing leaders.
+    # Global must include KR/TW to avoid missing industry leaders.
     if region == "Global":
         return (
             "Global large-caps: US, Japan, Developed Europe (EU+UK+Switzerland), "
@@ -216,7 +250,8 @@ def _region_definition(region: RegionMode) -> str:
     if region == "Europe":
         return "Developed Europe: EU + UK + Switzerland (exclude Russia)."
     if region == "China":
-        return "China large-caps: Mainland A-shares + Hong Kong listed China large-caps."
+        # User request: include Taiwan in China mode.
+        return "Greater China large-caps: Mainland A-shares + Hong Kong + Taiwan (TW)."
     return "Global"
 
 
@@ -230,9 +265,14 @@ def _large_cap_threshold_usd(region: RegionMode) -> float:
     return 8e9
 
 
+def clamp_top_n(n: int) -> int:
+    return max(1, min(int(n), 20))
+
+
 def draft_pool_size(top_n: int) -> int:
-    n = max(1, min(int(top_n), 30))
-    return int(min(80, n + 20))
+    n = clamp_top_n(top_n)
+    # N+20 (strictly)
+    return int(n + 20)
 
 
 # =============================================================================
@@ -298,58 +338,49 @@ def parse_trr(v: Any) -> float:
         return 0.0
 
 
-def _clean_ticker_line(line: str) -> str:
-    s = (line or "").strip().upper()
-    # remove bullets / numbering
-    s = re.sub(r"^\s*(?:-|\*|•|\d+[\).\]]\s*)", "", s).strip()
-    # keep first token
-    s = re.split(r"\s+", s)[0].strip()
-    # strip commas
-    s = s.replace(",", "")
-    # yfinance supports '-' for some (BRK-B), keep it
-    # final filter later
-    return s
+# =============================================================================
+# Country inference (listed country)
+# =============================================================================
+_SUFFIX_COUNTRY = {
+    "T": "Japan",
+    "HK": "Hong Kong",
+    "SS": "China",
+    "SZ": "China",
+    "KS": "South Korea",
+    "KQ": "South Korea",
+    "TW": "Taiwan",
+    "SW": "Switzerland",
+    "L": "United Kingdom",
+    "AS": "Netherlands",
+    "PA": "France",
+    "DE": "Germany",
+    "MI": "Italy",
+    "MC": "Spain",
+    "ST": "Sweden",
+    "HE": "Finland",
+    "CO": "Denmark",
+    "OL": "Norway",
+    "BR": "Belgium",
+    "VI": "Austria",
+    "IR": "Ireland",
+    "TO": "Canada",
+    "AX": "Australia",
+    "SG": "Singapore",
+}
 
-
-_TICKER_RE = re.compile(r"^[0-9A-Z]{1,10}(?:[-][0-9A-Z]{1,4})?(?:\.[A-Z]{1,6})?$")
-
-def parse_tickers_lines(txt: str, max_n: int) -> List[str]:
-    lines = [ln for ln in (txt or "").splitlines() if ln.strip()]
-    out: List[str] = []
-    seen = set()
-    for ln in lines:
-        t = _clean_ticker_line(ln)
-        if not t:
-            continue
-        if not _TICKER_RE.match(t):
-            continue
-        if t not in seen:
-            out.append(t); seen.add(t)
-        if len(out) >= max_n:
-            break
-    return out
-
-
-def extract_tickers_from_text(raw: str, max_n: int = 80) -> List[str]:
-    raw = raw or ""
-    candidates: List[Tuple[int, str]] = []
-    for m in re.finditer(r"\b[0-9A-Z]{1,10}(?:[-][0-9A-Z]{1,4})?\.[A-Z]{1,6}\b", raw):
-        candidates.append((m.start(), m.group(0).upper()))
-    for m in re.finditer(r"\(([A-Z]{1,5}(?:-[A-Z]{1,2})?)\)", raw):
-        candidates.append((m.start(), m.group(1).upper()))
-    for m in re.finditer(r"(?m)^\s*(?:-|\*|\d+\.)\s*([A-Z]{2,5}(?:-[A-Z]{1,2})?)\b", raw):
-        candidates.append((m.start(), m.group(1).upper()))
-    stop = {"THE","AND","FOR","WITH","FROM","THIS","THAT","WILL","ARE","INC","LTD","PLC","CO","ETF","USD","TRR","TOP","RANK"}
-    out: List[str] = []
-    seen = set()
-    for _, t in sorted(candidates, key=lambda x: x[0]):
-        if t in stop:
-            continue
-        if t not in seen and _TICKER_RE.match(t):
-            out.append(t); seen.add(t)
-        if len(out) >= max_n:
-            break
-    return out
+def infer_listed_country(ticker: str, info: Dict[str, Any]) -> str:
+    t = (ticker or "").upper().strip()
+    if "." in t:
+        suf = t.split(".")[-1]
+        if suf in _SUFFIX_COUNTRY:
+            return _SUFFIX_COUNTRY[suf]
+    exch = str(info.get("exchange") or info.get("fullExchangeName") or "").upper()
+    # crude US detection
+    if exch in ("NYQ","NMS","NAS","NGM","ASE","BATS","CBOE"):
+        return "United States"
+    if "NYSE" in exch or "NASDAQ" in exch:
+        return "United States"
+    return ""
 
 
 # =============================================================================
@@ -392,7 +423,7 @@ def _cache_save(data_dir: str, key: str, payload: Dict[str, Any]) -> None:
 
 
 # =============================================================================
-# Gemini — REST-first raw text
+# Gemini (REST-first)
 # =============================================================================
 def _compose_prompt(messages: List[Dict[str, str]]) -> Tuple[str, str]:
     system_txt = ""
@@ -512,13 +543,42 @@ def _parse_json_any(txt: str) -> Any:
     raise ValueError("No JSON object/array found.")
 
 
-def _ai_system_prompt() -> str:
-    return "You are a senior global equity portfolio manager. Follow instructions exactly."
+# =============================================================================
+# Ticker parsing (strict lines)
+# =============================================================================
+_TICKER_RE = re.compile(r"^[0-9A-Z]{1,10}(?:[-][0-9A-Z]{1,4})?(?:\.[A-Z]{1,6})?$")
+
+def _clean_ticker_line(line: str) -> str:
+    s = (line or "").strip().upper()
+    s = re.sub(r"^\s*(?:-|\*|•|\d+[\).\]]\s*)", "", s).strip()
+    s = re.split(r"\s+", s)[0].strip()
+    s = s.replace(",", "")
+    return s
+
+
+def parse_tickers_lines(txt: str, max_n: int) -> List[str]:
+    lines = [ln for ln in (txt or "").splitlines() if ln.strip()]
+    out: List[str] = []
+    seen = set()
+    for ln in lines:
+        t = _clean_ticker_line(ln)
+        if not t:
+            continue
+        if not _TICKER_RE.match(t):
+            continue
+        if t not in seen:
+            out.append(t); seen.add(t)
+        if len(out) >= max_n:
+            break
+    return out
 
 
 # =============================================================================
-# Prompts (strict count + chunked details)
+# Prompts
 # =============================================================================
+def _ai_system() -> str:
+    return "You are a senior global equity PM and sector analyst. Follow instructions exactly."
+
 def build_messages_tickers_only_strict(theme: str, region: RegionMode, pool: int) -> List[Dict[str, str]]:
     region_def = _region_definition(region)
     user_prompt = f"""
@@ -527,14 +587,14 @@ Return ONLY tickers, one ticker per line. No numbering, no bullets, no extra tex
 Theme: "{theme}"
 Region: {region} (definition: {region_def})
 
-Hard constraints (MUST):
+HARD RULES (MUST, otherwise invalid):
 - Output EXACTLY {pool} tickers (exactly {pool} non-empty lines).
 - LARGE-CAP, index-sized, liquid public equities only.
 - yfinance-compatible tickers WITH suffixes when needed (0700.HK, 2330.TW, 005930.KS, 8035.T, ASML.AS, NESN.SW, HSBA.L).
 - Do NOT include ETFs, funds, private companies.
 - Sort by estimated Theme Market Cap (Market Cap × TRR) descending.
 
-If you are unsure about theme relevance, still output {pool} best candidates.
+If you are tempted to stop early, continue until you reach EXACTLY {pool} lines.
 """.strip()
     return [{"role": "system", "content": "Return only plain text tickers. Follow the exact line-count."},
             {"role": "user", "content": user_prompt}]
@@ -555,24 +615,20 @@ MUST NOT include any of these tickers:
 Constraints:
 - LARGE-CAP only, yfinance tickers with suffixes when needed.
 - No ETFs/funds.
-- Keep sorting by estimated Theme Market Cap (desc) among the additional tickers.
+- Sort by estimated Theme Market Cap (desc) among the additional tickers.
 """.strip()
     return [{"role": "system", "content": "Return only plain text tickers. Follow the exact line-count."},
             {"role": "user", "content": user_prompt}]
 
 
-def build_messages_fill_universe_details(theme: str, region: RegionMode, asof: date, tickers: List[str]) -> List[Dict[str, str]]:
+def build_messages_trr_only(theme: str, region: RegionMode, tickers: List[str]) -> List[Dict[str, str]]:
     region_def = _region_definition(region)
     schema = {
         "status": "ok|error",
         "rows": [
             {
                 "ticker": "string",
-                "company_name": "string",
-                "listed_country": "string",
-                "primary_exchange": "string",
                 "subtheme_bucket": "string",
-                "approx_market_cap_usd": 0.0,
                 "theme_revenue_ratio": 0.0,
                 "method": "disclosed|proxy|estimated",
                 "confidence": "High|Med|Low",
@@ -582,45 +638,33 @@ def build_messages_fill_universe_details(theme: str, region: RegionMode, asof: d
     example = {
         "status": "ok",
         "rows": [
-            {
-                "ticker": "NVDA",
-                "company_name": "NVIDIA",
-                "listed_country": "United States",
-                "primary_exchange": "NASDAQ",
-                "subtheme_bucket": "GPU/AI",
-                "approx_market_cap_usd": 1200000000000,
-                "theme_revenue_ratio": 0.95,
-                "method": "estimated",
-                "confidence": "Med",
-            }
+            {"ticker":"NVDA","subtheme_bucket":"GPU/AI","theme_revenue_ratio":0.95,"method":"estimated","confidence":"Med"}
         ]
     }
     user_prompt = f"""
 Return ONLY JSON. No markdown.
 
-Task: Fill required fields for the given tickers (universe enrichment).
+Task: Estimate TRR (Theme Revenue Ratio) for each ticker.
 
 Theme: "{theme}"
 Region: {region} (definition: {region_def})
-As-of (market cap month-end): {asof.isoformat()}
 
 Tickers (MUST cover ALL, no omissions, no extras):
 {json.dumps(tickers, ensure_ascii=False)}
 
-Rules:
-- rows MUST contain each ticker EXACTLY ONCE.
-- approx_market_cap_usd: month-end rough estimate in USD (number). If unknown, output 0.
-- theme_revenue_ratio (TRR): 0-1 (you may output percent string like "60%").
-- Keep strings short (company_name <= 40 chars, subtheme_bucket <= 18 chars).
-- If uncertain: method="estimated", confidence="Low".
+Critical requirements:
+- TRR MUST be present for EVERY ticker: a number in [0,1].
+- Do NOT return 0.0 unless theme exposure is genuinely negligible (<1% of revenue). If uncertain, provide a defensible estimate and set method="estimated" confidence="Low".
+- Prefer disclosed segment revenue if you know it; otherwise use best proxy/estimate.
+- subtheme_bucket: short label (<=18 chars).
 
 Schema:
 {json.dumps(schema, ensure_ascii=False)}
 Example (shape only):
 {json.dumps(example, ensure_ascii=False)}
 """.strip()
-    return [{"role": "system", "content": _ai_system_prompt()},
-            {"role": "user", "content": user_prompt}]
+    return [{"role":"system","content":_ai_system()},
+            {"role":"user","content":user_prompt}]
 
 
 def build_messages_summaries(theme: str, tickers: List[str]) -> List[Dict[str, str]]:
@@ -638,7 +682,7 @@ Constraints:
 Schema:
 {json.dumps(schema, ensure_ascii=False)}
 """.strip()
-    return [{"role": "system", "content": _ai_system_prompt()},
+    return [{"role": "system", "content": _ai_system()},
             {"role": "user", "content": user_prompt}]
 
 
@@ -680,7 +724,7 @@ Rules (critical):
 Schema:
 {json.dumps(schema, ensure_ascii=False)}
 """.strip()
-    return [{"role": "system", "content": _ai_system_prompt()},
+    return [{"role": "system", "content": _ai_system()},
             {"role": "user", "content": user_prompt}]
 
 
@@ -694,7 +738,7 @@ def _get_list_any(obj: Dict[str, Any], keys: List[str]) -> Any:
     return None
 
 
-def normalize_details(obj: Any) -> Dict[str, Any]:
+def normalize_trr(obj: Any) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         return {"status":"error","rows":[]}
     status = str(obj.get("status","ok"))
@@ -704,13 +748,6 @@ def normalize_details(obj: Any) -> Dict[str, Any]:
     if raw_rows is None:
         raw_rows = _get_list_any(obj, ["tickers","symbols"])
     rows: List[Dict[str, Any]] = []
-    if isinstance(raw_rows, list) and raw_rows and all(isinstance(x, str) for x in raw_rows):
-        for i, t in enumerate(raw_rows):
-            t2 = str(t).strip().upper()
-            if not t2:
-                continue
-            rows.append({"ticker": t2})
-        return {"status": status, "rows": rows}
     if not isinstance(raw_rows, list):
         raw_rows = []
     for r in raw_rows:
@@ -721,11 +758,7 @@ def normalize_details(obj: Any) -> Dict[str, Any]:
             continue
         rows.append({
             "ticker": t,
-            "company_name": str(r.get("company_name", r.get("name","")) or "").strip(),
-            "listed_country": str(r.get("listed_country", r.get("country","")) or "").strip(),
-            "primary_exchange": str(r.get("primary_exchange", r.get("exchange","")) or "").strip(),
             "subtheme_bucket": str(r.get("subtheme_bucket", r.get("subtheme","")) or "").strip(),
-            "approx_market_cap_usd": parse_usd_number(r.get("approx_market_cap_usd", r.get("market_cap_usd", 0.0))),
             "theme_revenue_ratio": parse_trr(r.get("theme_revenue_ratio", r.get("trr", 0.0))),
             "theme_revenue_ratio_method": str(r.get("method","estimated") or "estimated"),
             "theme_revenue_ratio_confidence": str(r.get("confidence","Low") or "Low"),
@@ -783,7 +816,7 @@ def normalize_refine(obj: Any) -> Dict[str, Any]:
 
 
 # =============================================================================
-# yfinance validation (bounded)
+# yfinance helpers (cached)
 # =============================================================================
 @st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
 def _yf_download_cached(tickers: Tuple[str, ...], start: str, end: str) -> pd.DataFrame:
@@ -881,7 +914,7 @@ def compute_mktcap_asof_usd_bounded(tickers: List[str], asof: date, timeout_tota
     tickers = [str(t).strip().upper() for t in tickers if t and str(t).strip()]
     tickers = list(dict.fromkeys(tickers))
     if not tickers:
-        return pd.DataFrame(columns=["ticker","mcap_usd","mcap_quality"])
+        return pd.DataFrame(columns=["ticker","mcap_usd","mcap_quality","company_name_yf","exchange_yf","listed_country_yf"])
 
     def _work() -> pd.DataFrame:
         close_map = _month_end_close_chunked(tickers, asof, chunk=15)
@@ -925,7 +958,19 @@ def compute_mktcap_asof_usd_bounded(tickers: List[str], asof: date, timeout_tota
 
             fx = fx_map.get(ccy)
             mcap_usd = (float(mcap_local) * float(fx)) if (mcap_local is not None and fx is not None) else None
-            rows.append({"ticker": t, "mcap_usd": mcap_usd, "mcap_quality": quality + ("" if fx is not None else "|fx_unavailable")})
+
+            company = str(info.get("shortName") or info.get("longName") or "")[:80]
+            exch = str(info.get("fullExchangeName") or info.get("exchange") or "")
+            listed = infer_listed_country(t, info)
+
+            rows.append({
+                "ticker": t,
+                "mcap_usd": mcap_usd,
+                "mcap_quality": quality + ("" if fx is not None else "|fx_unavailable"),
+                "company_name_yf": company,
+                "exchange_yf": exch,
+                "listed_country_yf": listed,
+            })
 
         df = pd.DataFrame(rows)
         df["mcap_usd"] = pd.to_numeric(df["mcap_usd"], errors="coerce")
@@ -936,11 +981,11 @@ def compute_mktcap_asof_usd_bounded(tickers: List[str], asof: date, timeout_tota
         try:
             return fut.result(timeout=float(timeout_total_s))
         except Exception:
-            return pd.DataFrame(columns=["ticker","mcap_usd","mcap_quality"])
+            return pd.DataFrame(columns=["ticker","mcap_usd","mcap_quality","company_name_yf","exchange_yf","listed_country_yf"])
 
 
 # =============================================================================
-# Executor
+# Executor (single worker)
 # =============================================================================
 @st.cache_resource
 def _executor() -> cf.ThreadPoolExecutor:
@@ -948,15 +993,15 @@ def _executor() -> cf.ThreadPoolExecutor:
 
 
 # =============================================================================
-# Jobs (pipeline stages)
+# Jobs (Auto pipeline)
 # =============================================================================
 def job_auto_tickers(*, inp: ThemeInput, data_dir: str, cancel_event: threading.Event) -> Dict[str, Any]:
     theme = inp.theme_text.strip()
     region = inp.region_mode
-    top_n = max(1, min(int(inp.top_n), 30))
+    top_n = clamp_top_n(inp.top_n)
     pool = draft_pool_size(top_n)
     model = _get_secret("GEMINI_MODEL") or "gemini-2.5-flash"
-    key = _cache_key("tickers_v16", theme, region, str(pool), model)
+    key = _cache_key("tickers_v17", theme, region, str(pool), model)
 
     cached = _cache_load(data_dir, key)
     if isinstance(cached, dict) and isinstance(cached.get("tickers"), list) and len(cached.get("tickers")) >= pool:
@@ -969,7 +1014,7 @@ def job_auto_tickers(*, inp: ThemeInput, data_dir: str, cancel_event: threading.
     )
     tickers = parse_tickers_lines(raw, max_n=pool)
 
-    # Top-up loop if short
+    # Top-up if short (strictly additional tickers)
     attempts = 0
     while len(tickers) < pool and attempts < 2 and not cancel_event.is_set():
         need = pool - len(tickers)
@@ -985,22 +1030,10 @@ def job_auto_tickers(*, inp: ThemeInput, data_dir: str, cancel_event: threading.
         dbg = {"first": dbg, "topup": dbg2}
         attempts += 1
 
-    # Final clamp
     tickers = tickers[:pool]
-
-    # If still short, fallback to regex extraction from raw
-    if len(tickers) < pool:
-        extra = extract_tickers_from_text(raw, max_n=pool)
-        for t in extra:
-            if t not in tickers:
-                tickers.append(t)
-            if len(tickers) >= pool:
-                break
-        tickers = tickers[:pool]
-
     notes = ""
     if len(tickers) < pool:
-        notes = f"WARNING: Only {len(tickers)}/{pool} tickers obtained. (Will proceed.)"
+        notes = f"WARNING: Only {len(tickers)}/{pool} tickers obtained. (Proceeding.)"
 
     payload = {"tickers": tickers, "ai_raw_text": raw}
     if len(tickers) >= pool:
@@ -1009,22 +1042,20 @@ def job_auto_tickers(*, inp: ThemeInput, data_dir: str, cancel_event: threading.
     return {"status":"ok","tickers":tickers,"pool":pool,"model":model,"notes":notes,"ai_raw_text":raw,"debug_meta":dbg}
 
 
-def job_auto_details(*, inp: ThemeInput, data_dir: str, tickers: List[str], cancel_event: threading.Event) -> Dict[str, Any]:
+def job_auto_trr(*, inp: ThemeInput, data_dir: str, tickers: List[str], cancel_event: threading.Event) -> Dict[str, Any]:
     theme = inp.theme_text.strip()
     region = inp.region_mode
-    top_n = max(1, min(int(inp.top_n), 30))
+    top_n = clamp_top_n(inp.top_n)
     pool = draft_pool_size(top_n)
-    asof = most_recent_month_end(date.today())
     model = _get_secret("GEMINI_MODEL") or "gemini-2.5-flash"
+    asof = most_recent_month_end(date.today())
 
     tickers = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
     tickers = list(dict.fromkeys(tickers))[:pool]
 
-    # Chunk to reduce JSON failure risk
-    chunks: List[List[str]] = []
+    # Chunk (reduce JSON failures)
     chunk_size = 25 if len(tickers) > 25 else len(tickers)
-    for i in range(0, len(tickers), chunk_size):
-        chunks.append(tickers[i:i+chunk_size])
+    chunks: List[List[str]] = [tickers[i:i+chunk_size] for i in range(0, len(tickers), chunk_size)]
 
     rows_map: Dict[str, Dict[str, Any]] = {}
     raw_all: List[str] = []
@@ -1032,13 +1063,12 @@ def job_auto_details(*, inp: ThemeInput, data_dir: str, tickers: List[str], canc
     for ch in chunks:
         if cancel_event.is_set():
             break
-        key = _cache_key("details_v16", theme, region, asof.isoformat(), _sha12(",".join(ch)), model)
+        key = _cache_key("trr_v17", theme, region, asof.isoformat(), _sha12(",".join(ch)), model)
         cached = _cache_load(data_dir, key)
         obj = cached if isinstance(cached, dict) else None
 
-        raw = ""
         if obj is None:
-            msgs = build_messages_fill_universe_details(theme, region, asof, ch)
+            msgs = build_messages_trr_only(theme, region, ch)
             raw, dbg = gemini_generate_raw_text(
                 messages=msgs, model=model, temperature=0.10, max_output_tokens=1800, timeout_s=14, response_mime_type="application/json"
             )
@@ -1048,99 +1078,167 @@ def job_auto_details(*, inp: ThemeInput, data_dir: str, tickers: List[str], canc
                 obj = parsed if isinstance(parsed, dict) else {"status":"ok","rows":parsed}
             except Exception:
                 obj = {"status":"error","rows":[]}
-            # cache only if it produced some rows
-            if isinstance(obj, dict) and normalize_details(obj).get("rows"):
+            # cache if rows exist
+            if isinstance(obj, dict) and normalize_trr(obj).get("rows"):
                 _cache_save(data_dir, key, obj)
 
-        norm = normalize_details(obj)
+        norm = normalize_trr(obj)
         for r in (norm.get("rows") or []):
             t = str(r.get("ticker","") or "").strip().upper()
             if not t:
                 continue
             rows_map[t] = r
 
-    # Ensure every ticker has a row
+    # Repair pass: if TRR missing/zero for many, re-ask only those tickers once.
+    missing = []
+    for t in tickers:
+        trr = parse_trr(rows_map.get(t, {}).get("theme_revenue_ratio", 0.0))
+        if trr <= 0.0:
+            missing.append(t)
+    if missing and not cancel_event.is_set():
+        # One repair call (chunked)
+        miss_chunks = [missing[i:i+20] for i in range(0, len(missing), 20)]
+        for mch in miss_chunks:
+            if cancel_event.is_set():
+                break
+            msgs = build_messages_trr_only(theme, region, mch)
+            raw, _dbg = gemini_generate_raw_text(
+                messages=msgs, model=model, temperature=0.10, max_output_tokens=1500, timeout_s=12, response_mime_type="application/json"
+            )
+            raw_all.append(raw)
+            try:
+                obj2 = _parse_json_any(raw)
+            except Exception:
+                obj2 = {"status":"error","rows":[]}
+            norm2 = normalize_trr(obj2)
+            for r in (norm2.get("rows") or []):
+                t = str(r.get("ticker","") or "").strip().upper()
+                if t:
+                    rows_map[t] = r
+
+    # Final rows for every ticker (fallback TRR if still missing)
     out_rows: List[Dict[str, Any]] = []
-    for i, t in enumerate(tickers):
+    for t in tickers:
         r = rows_map.get(t, {})
+        trr = parse_trr(r.get("theme_revenue_ratio", 0.0))
+        if trr <= 0.0:
+            # conservative fallback to keep ranking operational
+            trr = 0.05
+            method = "estimated"
+            conf = "Low"
+        else:
+            method = str(r.get("theme_revenue_ratio_method", r.get("method","estimated")) or "estimated")
+            conf = str(r.get("theme_revenue_ratio_confidence", r.get("confidence","Low")) or "Low")
+
         out_rows.append({
-            "rank_hint": i + 1,
-            "company_name": str(r.get("company_name","") or ""),
             "ticker": t,
-            "listed_country": str(r.get("listed_country","") or ""),
-            "primary_exchange": str(r.get("primary_exchange","") or ""),
-            "subtheme_bucket": str(r.get("subtheme_bucket","") or ""),
-            "approx_market_cap_usd": parse_usd_number(r.get("approx_market_cap_usd", 0.0)),
-            "theme_revenue_ratio": parse_trr(r.get("theme_revenue_ratio", 0.0)),
-            "theme_revenue_ratio_method": str(r.get("theme_revenue_ratio_method", r.get("method","estimated")) or "estimated"),
-            "theme_revenue_ratio_confidence": str(r.get("theme_revenue_ratio_confidence", r.get("confidence","Low")) or "Low"),
+            "subtheme_bucket": str(r.get("subtheme_bucket","") or "")[:18],
+            "theme_revenue_ratio": float(trr),
+            "theme_revenue_ratio_method": method,
+            "theme_revenue_ratio_confidence": conf,
         })
 
     df = pd.DataFrame(out_rows)
-    df["theme_mktcap_usd"] = pd.to_numeric(df["approx_market_cap_usd"], errors="coerce").fillna(0.0) * pd.to_numeric(df["theme_revenue_ratio"], errors="coerce").fillna(0.0)
-    df = df.sort_values(["theme_mktcap_usd","approx_market_cap_usd","rank_hint"], ascending=[False, False, True]).reset_index(drop=True)
-    df["rank"] = np.arange(1, len(df) + 1)
-    df["mcap_usd"] = df["approx_market_cap_usd"].astype(float)
-    df["mcap_quality"] = np.where(df["mcap_usd"] > 0, "ai_estimated_mktcap_usd", "unknown_mktcap")
-    df["mktcap_asof_date"] = asof.isoformat()
-
-    # placeholders for later stages
-    df["theme_business_summary"] = ""
-    df["non_theme_business_summary"] = ""
-    for col in ["trr_source_title","trr_source_publisher","trr_source_year","trr_source_url","trr_source_locator","trr_source_excerpt","trr_sources_full"]:
-        df[col] = "" if col != "trr_source_year" else None
-
-    return {"status":"ok","mode":"draft_details","asof":asof.isoformat(),"draft_rows":df.to_dict(orient="records"),"ai_raw_text":"\n\n---\n\n".join(raw_all)}
+    df["theme_revenue_ratio"] = df["theme_revenue_ratio"].apply(parse_trr)
+    return {"status":"ok","asof":asof.isoformat(),"trr_rows":df.to_dict(orient="records"),"ai_raw_text":"\n\n---\n\n".join(raw_all)}
 
 
-def job_validate_and_rank(*, inp: ThemeInput, data_dir: str, draft_rows: List[Dict[str, Any]], cancel_event: threading.Event) -> Dict[str, Any]:
+def job_validate_rank_and_summarize(*, inp: ThemeInput, data_dir: str, tickers: List[str], trr_rows: List[Dict[str, Any]], cancel_event: threading.Event) -> Dict[str, Any]:
     theme = inp.theme_text.strip()
     region = inp.region_mode
-    top_n = max(1, min(int(inp.top_n), 30))
+    top_n = clamp_top_n(inp.top_n)
     asof = most_recent_month_end(date.today())
 
-    df = pd.DataFrame(draft_rows)
-    if df.empty or "ticker" not in df.columns:
-        return {"status": "error", "stage": "validate", "notes": "Draft rows missing."}
+    tickers = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        return {"status":"error","notes":"No tickers."}
 
-    tickers = df["ticker"].astype(str).str.upper().tolist()
-    tickers = list(dict.fromkeys([t.strip() for t in tickers if t.strip()]))
+    trr_df = pd.DataFrame(trr_rows or [])
+    if trr_df.empty:
+        trr_df = pd.DataFrame({"ticker": tickers, "theme_revenue_ratio": [0.05]*len(tickers),
+                               "theme_revenue_ratio_method": ["estimated"]*len(tickers),
+                               "theme_revenue_ratio_confidence": ["Low"]*len(tickers),
+                               "subtheme_bucket": [""]*len(tickers)})
 
+    trr_df["ticker"] = trr_df["ticker"].astype(str).str.upper()
+    trr_df = trr_df.drop_duplicates(subset=["ticker"], keep="first")
+
+    # Market cap + yfinance metadata (bounded)
     mkt = compute_mktcap_asof_usd_bounded(tickers, asof, timeout_total_s=12)
 
-    validated_count = 0
+    df = pd.DataFrame({"ticker": tickers})
+    df = df.merge(trr_df, on="ticker", how="left")
+
+    # Attach market cap if available
     if not mkt.empty:
-        mkt = mkt.dropna(subset=["mcap_usd"])
-        validated_count = int(mkt["mcap_usd"].notna().sum())
-        df = df.merge(mkt, on="ticker", how="left", suffixes=("", "_val"))
-        df["mcap_usd"] = np.where(df["mcap_usd_val"].notna(), df["mcap_usd_val"], df.get("mcap_usd", 0.0))
-        df["mcap_quality"] = np.where(df["mcap_usd_val"].notna(), df["mcap_quality_val"], df.get("mcap_quality","ai_estimated_mktcap_usd"))
-        df = df.drop(columns=[c for c in ["mcap_usd_val","mcap_quality_val"] if c in df.columns])
+        df = df.merge(mkt, on="ticker", how="left")
+    else:
+        df["mcap_usd"] = np.nan
+        df["mcap_quality"] = "missing"
 
-    df["theme_revenue_ratio"] = df.get("theme_revenue_ratio", 0.0).apply(parse_trr)
-    df["mcap_usd"] = pd.to_numeric(df.get("mcap_usd", 0.0), errors="coerce").fillna(0.0)
-    df["theme_mktcap_usd"] = df["mcap_usd"] * df["theme_revenue_ratio"]
+    # Fill company_name / exchange / listed_country from yfinance (best effort)
+    df["company_name"] = df.get("company_name_yf", "")
+    df["primary_exchange"] = df.get("exchange_yf", "")
+    df["listed_country"] = df.get("listed_country_yf", "")
 
+    for col in ["company_name","primary_exchange","listed_country"]:
+        if col not in df.columns:
+            df[col] = ""
+
+    # Some may still be empty; last-resort country inference from ticker suffix
+    df["listed_country"] = df.apply(lambda r: r["listed_country"] if str(r.get("listed_country","")).strip() else infer_listed_country(str(r["ticker"]), {}), axis=1)
+
+    # Compute theme market cap
+    df["mcap_usd"] = pd.to_numeric(df.get("mcap_usd"), errors="coerce")
+    # Fallback if mcap missing: use yfinance current marketCap field quickly (cached info)
+    missing_mcap = df["mcap_usd"].isna() | (df["mcap_usd"] <= 0)
+    if missing_mcap.any():
+        info_map = _batch_infos(df.loc[missing_mcap, "ticker"].tolist(), max_workers=14)
+        mcap_now = []
+        for t in df.loc[missing_mcap, "ticker"].tolist():
+            info = info_map.get(t, {}) or {}
+            mcap_now.append(float(info.get("marketCap") or 0.0))
+        df.loc[missing_mcap, "mcap_usd"] = pd.to_numeric(mcap_now, errors="coerce")
+        df.loc[missing_mcap, "mcap_quality"] = df.loc[missing_mcap, "mcap_quality"].astype(str) + "|fallback_current_marketCap"
+
+        # Fill company/exchange if missing
+        def _fill_name(t: str) -> str:
+            info = info_map.get(t, {}) or {}
+            return str(info.get("shortName") or info.get("longName") or "")
+        def _fill_ex(t: str) -> str:
+            info = info_map.get(t, {}) or {}
+            return str(info.get("fullExchangeName") or info.get("exchange") or "")
+        df.loc[missing_mcap, "company_name"] = df.loc[missing_mcap, "company_name"].astype(str).replace("", np.nan)
+        df.loc[missing_mcap, "company_name"] = df.loc[missing_mcap, "company_name"].fillna(df.loc[missing_mcap, "ticker"].apply(_fill_name))
+        df.loc[missing_mcap, "primary_exchange"] = df.loc[missing_mcap, "primary_exchange"].astype(str).replace("", np.nan)
+        df.loc[missing_mcap, "primary_exchange"] = df.loc[missing_mcap, "primary_exchange"].fillna(df.loc[missing_mcap, "ticker"].apply(_fill_ex))
+        df.loc[missing_mcap, "listed_country"] = df.loc[missing_mcap, "listed_country"].astype(str).replace("", np.nan)
+        df.loc[missing_mcap, "listed_country"] = df.loc[missing_mcap, "listed_country"].fillna(df.loc[missing_mcap, "ticker"].apply(lambda t: infer_listed_country(t, info_map.get(t, {}) or {})))
+
+    df["theme_revenue_ratio"] = df.get("theme_revenue_ratio", 0.05).apply(parse_trr)
+    df["theme_mktcap_usd"] = pd.to_numeric(df.get("mcap_usd"), errors="coerce").fillna(0.0) * pd.to_numeric(df.get("theme_revenue_ratio"), errors="coerce").fillna(0.0)
+
+    # Large-cap filter only if mcap present
     thr = _large_cap_threshold_usd(region)
     df2 = df.copy()
-    if validated_count > 0:
-        df2 = df2[df2["mcap_usd"] >= thr]
+    df2 = df2[df2["mcap_usd"].fillna(0.0) >= thr] if df2["mcap_usd"].notna().any() else df2
 
-    df2 = df2.sort_values(["theme_mktcap_usd","mcap_usd","rank_hint"], ascending=[False, False, True]).reset_index(drop=True)
+    df2 = df2.sort_values(["theme_mktcap_usd","mcap_usd"], ascending=[False, False]).reset_index(drop=True)
     df2["rank"] = np.arange(1, len(df2) + 1)
     df2 = df2.head(top_n).copy()
     df2["mktcap_asof_date"] = asof.isoformat()
 
-    # Summaries for Top-N only (best-effort; lightweight)
+    # Summaries (best-effort)
     model = _get_secret("GEMINI_MODEL") or "gemini-2.5-flash"
     top_tickers = df2["ticker"].astype(str).tolist()
 
     smap: Dict[str, Dict[str, str]] = {}
     raw_sum = ""
     try:
-        msgs_sum = build_messages_summaries(theme, top_tickers)
+        msgs = build_messages_summaries(theme, top_tickers)
         raw_sum, _dbg = gemini_generate_raw_text(
-            messages=msgs_sum, model=model, temperature=0.15, max_output_tokens=900, timeout_s=10, response_mime_type="application/json"
+            messages=msgs, model=model, temperature=0.15, max_output_tokens=900, timeout_s=10, response_mime_type="application/json"
         )
         try:
             obj = _parse_json_any(raw_sum)
@@ -1150,34 +1248,26 @@ def job_validate_and_rank(*, inp: ThemeInput, data_dir: str, draft_rows: List[Di
     except Exception:
         smap = {}
 
-    df2["theme_business_summary"] = df2["ticker"].apply(lambda t: smap.get(t, {}).get("theme_ja","").strip() or "テーマ関連は推計（Draft）。")
+    df2["theme_business_summary"] = df2["ticker"].apply(lambda t: smap.get(t, {}).get("theme_ja","").strip() or "テーマ関連は推計。")
     df2["non_theme_business_summary"] = df2["ticker"].apply(lambda t: smap.get(t, {}).get("non_theme_ja","").strip() or "非テーマ事業: 多角化（要確認）。")
 
+    # Source placeholders (refine stage fills)
     for col in ["trr_source_title","trr_source_publisher","trr_source_year","trr_source_url","trr_source_locator","trr_source_excerpt","trr_sources_full"]:
-        if col not in df2.columns:
-            df2[col] = "" if col != "trr_source_year" else None
+        df2[col] = "" if col != "trr_source_year" else None
 
-    return {
-        "status": "ok",
-        "mode": "ranked",
-        "asof": asof.isoformat(),
-        "validated_mktcap_count": validated_count,
-        "validated_mktcap_total": len(tickers),
-        "ranked": df2.to_dict(orient="records"),
-        "ai_raw_text_summaries": raw_sum,
-    }
+    return {"status":"ok","mode":"ranked","asof":asof.isoformat(),"ranked":df2.to_dict(orient="records"),"ai_raw_text_summaries":raw_sum}
 
 
 def job_refine(*, inp: ThemeInput, data_dir: str, current_rows: List[Dict[str, Any]], cancel_event: threading.Event) -> Dict[str, Any]:
     theme = inp.theme_text.strip()
     region = inp.region_mode
-    top_n = max(1, min(int(inp.top_n), 30))
+    top_n = clamp_top_n(inp.top_n)
     asof = most_recent_month_end(date.today())
     model = _get_secret("GEMINI_MODEL") or "gemini-2.5-flash"
 
-    df = pd.DataFrame(current_rows)
+    df = pd.DataFrame(current_rows or [])
     if df.empty:
-        return {"status": "error", "stage": "refine", "notes": "No ranked rows."}
+        return {"status":"error","notes":"No ranked rows."}
 
     payload = []
     for _, r in df.head(top_n).iterrows():
@@ -1194,7 +1284,6 @@ def job_refine(*, inp: ThemeInput, data_dir: str, current_rows: List[Dict[str, A
     raw, _dbg = gemini_generate_raw_text(
         messages=msgs, model=model, temperature=0.10, max_output_tokens=2400, timeout_s=16, response_mime_type="application/json"
     )
-    obj = {}
     try:
         obj = _parse_json_any(raw)
     except Exception:
@@ -1202,7 +1291,7 @@ def job_refine(*, inp: ThemeInput, data_dir: str, current_rows: List[Dict[str, A
 
     norm = normalize_refine(obj)
     if norm.get("status") != "ok":
-        return {"status": "error", "stage": "refine", "notes": norm.get("notes","")}
+        return {"status":"error","notes": norm.get("notes","Refine failed")}
 
     upd = {r["ticker"]: r for r in (norm.get("rows") or []) if isinstance(r, dict) and r.get("ticker")}
 
@@ -1243,14 +1332,12 @@ def job_refine(*, inp: ThemeInput, data_dir: str, current_rows: List[Dict[str, A
 def show_table_start_rank(df: pd.DataFrame, cols: List[str], height: int) -> None:
     cols = [c for c in cols if c in df.columns]
     view = df[cols].copy()
-    # ensure Rank first
     if "rank" in view.columns:
         ordered = ["rank"] + [c for c in view.columns if c != "rank"]
         view = view[ordered]
     try:
         st.dataframe(view, use_container_width=True, height=height, hide_index=True)
     except TypeError:
-        # fallback: put rank as index so leftmost is rank, not 0..n
         if "rank" in view.columns:
             v2 = view.set_index("rank")
             st.dataframe(v2, use_container_width=True, height=height)
@@ -1259,29 +1346,20 @@ def show_table_start_rank(df: pd.DataFrame, cols: List[str], height: int) -> Non
 
 
 # =============================================================================
-# Definitions
+# UI
 # =============================================================================
-def build_definitions_table() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"Field": "Theme Market Cap", "Definition": "Theme Market Cap = Market Cap (USD, month-end target; validated if possible) × TRR"},
-        {"Field": "TRR (Theme Revenue Ratio)", "Definition": "TRR = テーマ関連売上 ÷ 総売上（0〜1）"},
-        {"Field": "Market Cap (validated)", "Definition": "Validate step uses month-end proxy: floatShares×Close (fallbacks: sharesOutstanding×Close / derived / marketCap field)"},
-        {"Field": "Market Cap (draft)", "Definition": "Draft uses AI estimated month-end market cap (USD). Unknown => 0 (shown as '-')"},
-        {"Field": "As-of date", "Definition": "時価総額基準日（原則：直近月末）"},
-        {"Field": "Method / Confidence", "Definition": "disclosed/proxy/estimated と High/Med/Low（推計は明示）"},
-        {"Field": "Sources (Refine)", "Definition": "title/publisher/year/url/locator/excerpt。url無しの場合 excerpt は空文字"},
-    ])
+def _format_region_label(r: str) -> str:
+    if r == "China":
+        return "China (incl. Taiwan)"
+    return r
 
 
-# =============================================================================
-# UI (Auto pipeline)
-# =============================================================================
 def render_next_gen_tab(data_dir: str = "data") -> None:
     st.markdown(THEMELENS_CSS, unsafe_allow_html=True)
     st.markdown('<div class="tl-title">THEMELENS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tl-subtitle">AI-first Theme Portfolio Builder</div>', unsafe_allow_html=True)
 
     ss = st.session_state
-    ss.setdefault("tl_draft_rows", None)     # universe (pool)
     ss.setdefault("tl_rows", None)           # ranked topN
     ss.setdefault("tl_meta", {})
     ss.setdefault("tl_job", None)
@@ -1291,20 +1369,31 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
     ss.setdefault("tl_elapsed_final", None)
     ss.setdefault("tl_stage", "idle")
     ss.setdefault("tl_universe_tickers", None)
+    ss.setdefault("tl_trr_rows", None)
 
-    # Controls
+    # Controls (top, no sidebar)
     st.markdown('<div class="tl-panel">', unsafe_allow_html=True)
     with st.form("tl_controls", clear_on_submit=False):
-        theme_text = st.text_input("Theme", value=ss.get("tl_theme_text", "半導体"), placeholder="例: 半導体 / ゲーム / サイバー / 生成AI / 防衛 ...")
+        # Stylish helper above Theme
+        st.markdown(
+            '<div style="opacity:0.72;margin:2px 2px 8px 2px;letter-spacing:0.03em;">'
+            'Type any theme you want to turn into an investable portfolio.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        theme_text = st.text_input("Theme", value=ss.get("tl_theme_text", "半導体"),
+                                   placeholder="e.g., Semiconductors / Gaming / Cybersecurity / GenAI ...")
         c1, c2, c3 = st.columns([2.2, 1.0, 1.6])
+        region_options = ["Global","Japan","US","Europe","China"]
         with c1:
-            region_mode = st.radio("Region", ["Global","Japan","US","Europe","China"], horizontal=True,
-                                   index=["Global","Japan","US","Europe","China"].index(ss.get("tl_region_mode","Global")))
+            region_mode = st.radio("Region", region_options, horizontal=True,
+                                   format_func=_format_region_label,
+                                   index=region_options.index(ss.get("tl_region_mode","Global")))
         with c2:
-            top_n = st.number_input("Top N", min_value=1, max_value=30, value=int(ss.get("tl_top_n", 30)), step=1)
+            top_n = st.number_input("Top N", min_value=1, max_value=20, value=int(ss.get("tl_top_n", 20)), step=1)
         pool = draft_pool_size(int(top_n))
         with c3:
-            build_btn = st.form_submit_button(f"Build (Auto) — Universe {pool} → Top {int(top_n)}", type="primary", use_container_width=True)
+            build_btn = st.form_submit_button(f"Build — Top {int(top_n)} (Universe {pool})", type="primary", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     ss["tl_theme_text"] = theme_text
@@ -1316,48 +1405,48 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
 
     # Start pipeline
     if build_btn:
-        ss["tl_draft_rows"] = None
         ss["tl_rows"] = None
         ss["tl_meta"] = {}
         ss["tl_universe_tickers"] = None
+        ss["tl_trr_rows"] = None
         ss["tl_stage"] = "tickers"
         ss["tl_pipeline_start"] = time.time()
         ss["tl_elapsed_final"] = None
 
         cancel_event = threading.Event()
         ss["tl_cancel_event"] = cancel_event
-        ss["tl_job"] = {"mode": "auto_tickers", "status": "running", "started_at": ss["tl_pipeline_start"]}
+        ss["tl_job"] = {"status":"running", "started_at": ss["tl_pipeline_start"]}
         ss["tl_future"] = _executor().submit(job_auto_tickers, inp=inp, data_dir=data_dir, cancel_event=cancel_event)
         _rerun()
 
-    # Running / orchestrator
-    job = ss.get("tl_job")
-    fut = ss.get("tl_future")
+    # Elapsed metric (live or final)
     pipeline_start = ss.get("tl_pipeline_start")
     stage = ss.get("tl_stage","idle")
-
-    # Elapsed metric (live or final)
     if pipeline_start is not None:
         if ss.get("tl_elapsed_final") is None:
             elapsed_live = time.time() - float(pipeline_start)
             st.metric("Elapsed (s)", f"{elapsed_live:.1f}")
+            if elapsed_live > 60 and stage not in ("done","idle"):
+                st.warning("Over 60 seconds — it may be better to cancel and retry (or choose a narrower theme / region).")
         else:
             st.metric("Elapsed (s)", f"{float(ss['tl_elapsed_final']):.1f}")
 
+    # Running orchestrator
+    job = ss.get("tl_job")
+    fut = ss.get("tl_future")
     if job and job.get("status") == "running" and fut is not None:
-        elapsed = time.time() - float(job.get("started_at", time.time()))
         if stage == "tickers":
-            st.info("Stage 1/4: Universe tickers (strict count).")
-        elif stage == "details":
-            st.info("Stage 2/4: Fill universe fields (TRR + approx market cap).")
-        elif stage == "validate":
-            st.info("Stage 3/4: Validate month-end market cap (bounded) and rank Top N.")
+            st.info("Stage 1/4: Building investable universe (strict count).")
+        elif stage == "trr":
+            st.info("Stage 2/4: Estimating TRR for the universe (best-effort, but never blank).")
+        elif stage == "rank":
+            st.info("Stage 3/4: Validating month-end market cap and ranking Top N.")
         elif stage == "refine":
-            st.info("Stage 4/4: Add TRR evidence (best-effort) and finalize.")
+            st.info("Stage 4/4: Adding evidence + tightening descriptions (Top N).")
         else:
             st.info("Working...")
 
-        cA, cB = st.columns([1.0, 4.0])
+        cA, cB, cC = st.columns([1.0, 2.0, 3.0])
         with cA:
             if st.button("Cancel", use_container_width=True):
                 ev = ss.get("tl_cancel_event")
@@ -1373,11 +1462,11 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
                 st.warning("Cancelled.")
                 st.stop()
         with cB:
-            st.caption("The list will appear as soon as we have the universe; enrichment continues automatically.")
-
-        # Soft warning if too long
-        if elapsed > 22:
-            st.warning("This is taking longer than expected. You can cancel and retry.")
+            # Universe size chip once available
+            if ss.get("tl_universe_tickers"):
+                st.caption(f"Universe: {len(ss['tl_universe_tickers'])} tickers")
+        with cC:
+            st.caption("The ranked list appears as soon as Stage 3 completes; refinement will auto-update.")
 
         if fut.done():
             try:
@@ -1390,69 +1479,33 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
                 st.error(f"Job failed: {e}")
                 st.stop()
 
-            # Store meta always
-            if isinstance(res, dict):
-                ss["tl_meta"] = res
-            else:
-                ss["tl_meta"] = {"status":"error","notes":"Unexpected result type."}
-                res = {"status":"error","notes":"Unexpected result type."}
-
-            # Orchestrate next stage
+            # Save last stage meta
+            ss["tl_meta"] = res if isinstance(res, dict) else {"status":"error","notes":"Unexpected result type."}
             cancel_event = ss.get("tl_cancel_event") or threading.Event()
 
             if stage == "tickers":
-                tickers = res.get("tickers", []) if isinstance(res, dict) else []
+                tickers = (res or {}).get("tickers", []) if isinstance(res, dict) else []
                 ss["tl_universe_tickers"] = tickers
-
-                # show immediate minimal draft list (tickers only) even before details
-                draft_rows = []
-                for i, t in enumerate(tickers):
-                    draft_rows.append({
-                        "rank_hint": i+1,
-                        "company_name": "",
-                        "ticker": t,
-                        "listed_country": "",
-                        "primary_exchange": "",
-                        "subtheme_bucket": "",
-                        "approx_market_cap_usd": 0.0,
-                        "theme_revenue_ratio": 0.0,
-                        "theme_revenue_ratio_method": "estimated",
-                        "theme_revenue_ratio_confidence": "Low",
-                        "theme_mktcap_usd": 0.0,
-                        "rank": i+1,
-                        "mcap_usd": 0.0,
-                        "mcap_quality": "unknown_mktcap",
-                        "mktcap_asof_date": asof.isoformat(),
-                        "theme_business_summary": "",
-                        "non_theme_business_summary": "",
-                        "trr_source_title": "",
-                        "trr_source_publisher": "",
-                        "trr_source_year": None,
-                        "trr_source_url": None,
-                        "trr_source_locator": "",
-                        "trr_source_excerpt": "",
-                        "trr_sources_full": "",
-                    })
-                ss["tl_draft_rows"] = draft_rows
-
-                ss["tl_stage"] = "details"
-                ss["tl_job"] = {"mode":"auto_details","status":"running","started_at": ss["tl_pipeline_start"]}
-                ss["tl_future"] = _executor().submit(job_auto_details, inp=inp, data_dir=data_dir, tickers=tickers, cancel_event=cancel_event)
+                ss["tl_stage"] = "trr"
+                ss["tl_job"] = {"status":"running", "started_at": ss["tl_pipeline_start"]}
+                ss["tl_future"] = _executor().submit(job_auto_trr, inp=inp, data_dir=data_dir, tickers=tickers, cancel_event=cancel_event)
                 _rerun()
 
-            elif stage == "details":
-                if isinstance(res, dict) and res.get("status") == "ok":
-                    ss["tl_draft_rows"] = res.get("draft_rows", ss.get("tl_draft_rows"))
-                ss["tl_stage"] = "validate"
-                ss["tl_job"] = {"mode":"validate","status":"running","started_at": ss["tl_pipeline_start"]}
-                ss["tl_future"] = _executor().submit(job_validate_and_rank, inp=inp, data_dir=data_dir, draft_rows=ss.get("tl_draft_rows") or [], cancel_event=cancel_event)
+            elif stage == "trr":
+                trr_rows = (res or {}).get("trr_rows", []) if isinstance(res, dict) else []
+                ss["tl_trr_rows"] = trr_rows
+                ss["tl_stage"] = "rank"
+                ss["tl_job"] = {"status":"running", "started_at": ss["tl_pipeline_start"]}
+                ss["tl_future"] = _executor().submit(job_validate_rank_and_summarize, inp=inp, data_dir=data_dir,
+                                                     tickers=ss.get("tl_universe_tickers") or [],
+                                                     trr_rows=trr_rows, cancel_event=cancel_event)
                 _rerun()
 
-            elif stage == "validate":
+            elif stage == "rank":
                 if isinstance(res, dict) and res.get("status") == "ok":
                     ss["tl_rows"] = res.get("ranked")
                 ss["tl_stage"] = "refine"
-                ss["tl_job"] = {"mode":"refine","status":"running","started_at": ss["tl_pipeline_start"]}
+                ss["tl_job"] = {"status":"running", "started_at": ss["tl_pipeline_start"]}
                 ss["tl_future"] = _executor().submit(job_refine, inp=inp, data_dir=data_dir, current_rows=ss.get("tl_rows") or [], cancel_event=cancel_event)
                 _rerun()
 
@@ -1465,79 +1518,63 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
                 ss["tl_elapsed_final"] = time.time() - float(pipeline_start or time.time())
                 _rerun()
 
-        time.sleep(0.45)
+        time.sleep(0.35)
         _rerun()
 
-    # Output sections (these render even while pipeline runs)
-    meta = ss.get("tl_meta") or {}
-    draft_rows = ss.get("tl_draft_rows")
+    # Deliverable (no Draft Universe display)
     rows = ss.get("tl_rows")
+    meta = ss.get("tl_meta") or {}
 
-    # Raw debug (optional)
-    ai_raw = str(meta.get("ai_raw_text","") or "").strip()
-    if ai_raw:
-        with st.expander("AI raw output (debug)", expanded=False):
-            st.text(ai_raw[:12000])
+    # Stylish definition block (always shown where the list will be)
+    st.markdown(
+        """
+        <div class="tl-hero">
+          <div class="kicker">DELIVERABLE</div>
+          <div class="body">
+            Ranked by <b>Theme Market Cap</b> = <b>Market Cap</b> (month-end, USD; validated if possible)
+            × <b>TRR</b> (Theme Revenue Ratio).
+          </div>
+          <div class="fine">
+            TRR is evidence-backed when possible; otherwise explicitly marked as <b>estimated</b>.
+            Market cap aims for free-float adjustments where available.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if meta.get("notes"):
-        st.caption(str(meta.get("notes")))
-
-    # Draft Universe table
-    if draft_rows is not None:
-        ddf = pd.DataFrame(draft_rows) if isinstance(draft_rows, list) else pd.DataFrame()
-        st.markdown("#### Draft Universe (N+20)")
-        st.markdown(f'<span class="tl-chip">As-of target: {asof.isoformat()}</span><span class="tl-chip">Pool: {len(ddf) if not ddf.empty else 0}</span>', unsafe_allow_html=True)
-
-        if ddf.empty:
-            st.warning("Draft list is empty.")
-        else:
-            dview = ddf.copy()
-            dview["TRR"] = (pd.to_numeric(dview.get("theme_revenue_ratio", 0.0), errors="coerce").fillna(0.0) * 100).round(1).astype(str) + "%"
-            dview["MktCap (USD)"] = pd.to_numeric(dview.get("mcap_usd", 0.0), errors="coerce").apply(fmt_money)
-            dview["Theme MktCap (USD)"] = pd.to_numeric(dview.get("theme_mktcap_usd", 0.0), errors="coerce").apply(fmt_money)
-            cols = ["rank","company_name","ticker","listed_country","subtheme_bucket","TRR","MktCap (USD)","Theme MktCap (USD)","theme_revenue_ratio_method","theme_revenue_ratio_confidence","mcap_quality"]
-            show_table_start_rank(dview, cols, height=420)
-
-    # Deliverable table (Top N)
     if rows:
         df = pd.DataFrame(rows)
         if not df.empty:
-            st.subheader("Deliverable: Ranked List (Theme Market Cap, desc)")
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                st.metric("As-of (MktCap)", str(df.get("mktcap_asof_date", pd.Series([asof.isoformat()])).iloc[0]))
-            with k2:
-                st.metric("Region", region_mode)
-            with k3:
-                st.metric("Top N", int(top_n))
-            with k4:
-                st.metric("Stage", str(ss.get("tl_stage","")))
+            st.subheader("Ranked List")
+            chips = []
+            chips.append(f'<span class="tl-chip">As-of: {str(df.get("mktcap_asof_date", pd.Series([asof.isoformat()])).iloc[0])}</span>')
+            chips.append(f'<span class="tl-chip">Region: {_format_region_label(region_mode)}</span>')
+            chips.append(f'<span class="tl-chip">Top N: {clamp_top_n(int(top_n))}</span>')
+            st.markdown("".join(chips), unsafe_allow_html=True)
 
             view = df.copy()
             view["TRR"] = (pd.to_numeric(view.get("theme_revenue_ratio", 0.0), errors="coerce").fillna(0.0) * 100).round(1).astype(str) + "%"
             view["MktCap (USD)"] = pd.to_numeric(view.get("mcap_usd", 0.0), errors="coerce").apply(fmt_money)
             view["Theme MktCap (USD)"] = pd.to_numeric(view.get("theme_mktcap_usd", 0.0), errors="coerce").apply(fmt_money)
+
             show_cols = [
                 "rank","company_name","ticker","listed_country",
                 "theme_business_summary","TRR","MktCap (USD)","Theme MktCap (USD)",
                 "non_theme_business_summary",
+                "theme_revenue_ratio_method","theme_revenue_ratio_confidence",
                 "trr_source_title","trr_source_publisher","trr_source_year","trr_source_locator",
                 "mcap_quality"
             ]
-            show_table_start_rank(view, show_cols, height=560)
+            show_table_start_rank(view, show_cols, height=620)
 
             sid = _sha12(f"{theme_text}|{region_mode}|{asof.isoformat()}|{top_n}")
             st.download_button("Download CSV", data=df.to_csv(index=False).encode("utf-8"),
                                file_name=f"themelens_ranked_list_{sid}.csv", mime="text/csv")
-            st.download_button("Download JSON (snapshot)", data=json.dumps({"meta": meta, "draft_rows": draft_rows, "rows": rows}, ensure_ascii=False, indent=2).encode("utf-8"),
-                               file_name=f"themelens_snapshot_{sid}.json", mime="application/json")
+    else:
+        st.caption("Run Build to generate the ranked list.")
 
-    # Definitions (always visible)
-    st.markdown("### Definitions")
-    st.markdown(
-        "- **Theme Market Cap** = Market Cap (USD, month-end target; validated if possible) × **TRR**\n"
-        "- **TRR (Theme Revenue Ratio)** = テーマ関連売上 ÷ 総売上（0〜1）\n"
-        "- Stage 1 builds the **Universe (N+20)** with strict ticker count; Stage 2 fills TRR + market-cap estimates; Stage 3 validates mktcap; Stage 4 adds evidence.\n"
-        "- If evidence is unavailable, TRR is labeled as **estimated** with **Low** confidence."
-    )
-    st.dataframe(build_definitions_table(), use_container_width=True, height=330)
+    # Optional raw debug (kept but hidden)
+    if isinstance(meta, dict) and meta.get("ai_raw_text"):
+        with st.expander("AI raw output (debug)", expanded=False):
+            st.text(str(meta.get("ai_raw_text"))[:12000])
