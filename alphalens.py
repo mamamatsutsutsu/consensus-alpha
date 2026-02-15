@@ -2,6 +2,7 @@ import os
 import time
 import re
 import math
+import json
 import urllib.parse
 import urllib.request
 import traceback
@@ -279,6 +280,70 @@ def clean_ai_text(text: str) -> str:
     bad = ["不明", "わからない", "分からない", "unknown"]
     for w in bad: text = re.sub(rf"(?m)^.*{re.escape(w)}.*$\n?", "", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
+
+
+# --- QUALITY GATE (AI output sanity check) ---
+# For commercial use: run a lightweight "accuracy & plausibility" pass before display.
+# This pass MUST NOT introduce new facts. It can only soften/qualify unsupported claims,
+# remove fake citations, and enforce the required structure.
+@st.cache_data(ttl=86400, show_spinner=False)
+def _ai_quality_gate(kind: str, raw_text: str, facts_json: str, nonce: int = 0) -> str:
+    if not raw_text or raw_text.strip() == "AI OFFLINE":
+        return raw_text
+    if not HAS_LIB or not API_KEY:
+        return raw_text
+    try:
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        prompt = f"""
+あなたは金融プロ向けアプリの「品質監査エディタ」だ。次の原則を厳守せよ。
+- 追加の調査は禁止。与えられたFACTS以外の新情報・新数値・新固有名詞（企業名/指数名/記事名/媒体名/日付）を作るな。
+- 原文の骨子は保ちつつ、嘘っぽい断定・不自然な因果・根拠不明な推薦・一般論を削る/弱める。
+- 「〜と言われている」「注視」「不透明」などの逃げ表現は削り、必要なら「仮説」として短く書け。
+- 架空の出典（Reutersが〜等）を生成しない。出典に触れるならFACTSのニュース要約範囲に限定せよ。
+- kind=sector の場合、必ず [SECTOR_OUTLOOK] → [TOP_PICK] → [RISK_TRIGGERS] → [JUDGE] の順を維持し、タグを消さない。
+- kind=equity の場合、過剰な断定を避け、監視ポイントは「当該銘柄に固有」にする。
+
+FACTS(JSON):
+{facts_json}
+
+TEXT:
+{raw_text}
+
+OUTPUT:
+修正後TEXTのみを出力（余計な前置き禁止）。
+"""
+        out = model.generate_content(prompt)
+        t = getattr(out, "text", "") or ""
+        t = t.strip()
+        return t if t else raw_text
+    except Exception:
+        return raw_text
+
+def _heuristic_gate(text: str) -> str:
+    if not text: 
+        return text
+    # Remove common meta/preambles and overly confident phrasing
+    t = text
+    t = re.sub(r"(?m)^\s*(はい、)?\s*承知(いたしました|しました)。?.*$\n?", "", t)
+    t = re.sub(r"(?m)^\s*以下に.*作成(する|します)。?.*$\n?", "", t)
+    t = re.sub(r"(?m)^\s*アナリストレポート.*$\n?", "", t)
+    # Soften absolute claims
+    t = re.sub(r"(必ず|確実に|間違いなく)", "可能性が高い", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+def quality_gate(kind: str, raw_text: str, facts: Dict[str, Any], nonce: int = 0) -> str:
+    # First heuristic pass (cheap, always)
+    base = _heuristic_gate(raw_text)
+    # Optional AI pass (accurate editor). Can be disabled for speed.
+    qc_on = st.session_state.get("qc_on", True)
+    if not qc_on:
+        return base
+    try:
+        facts_json = json.dumps(facts, ensure_ascii=False)[:8000]
+    except Exception:
+        facts_json = "{}"
+    refined = _ai_quality_gate(kind, base, facts_json, nonce=nonce)
+    return _heuristic_gate(refined)
 
 def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: float, market_key: str) -> str:
     m = re.search(r"【今後3ヶ月[^】]*】\n?(.*)", text, flags=re.DOTALL)
@@ -672,6 +737,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         p = f"""
         現在: {today_str}
         銘柄:{context['name']} ({context['ticker']})
+        企業概要:{context.get('overview','')}
         基礎データ:{context['fund_str']}
         市場・セクター比較:{context['m_comp']}
         株価動向:{context.get('price_action','')}
@@ -679,7 +745,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         次回決算日(取得値): {context.get("earnings_date","-")}。これが'-'でない場合、監視ポイントに必ず含めよ。
         Nonce:{context.get('nonce',0)}
         
-        あなたはAIエージェントとして、プロ向けのアナリストレポートを作成せよ。
+        あなたはAIエージェントとして、プロ向けの企業分析メモを作成せよ。
         文体は「だ・である」。
         記号(「**」や「""」)は使用禁止。
         「不明」「わからない」という言葉は禁止。データがない場合は言及しない。
@@ -720,6 +786,9 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
     return last_text or "AI OFFLINE"
 
 def parse_agent_debate(text: str) -> str:
+    """Parse tagged multi-agent debate and render in a fixed, pro layout.
+    Always enforce: SECTOR_OUTLOOK -> (agents...) -> JUDGE (styled).
+    """
     mapping = {
         "[SECTOR_OUTLOOK]": ("agent-outlook", "SECTOR OUTLOOK"),
         "[FUNDAMENTAL]": ("agent-fundamental", "FUNDAMENTAL"),
@@ -727,37 +796,60 @@ def parse_agent_debate(text: str) -> str:
         "[VALUATION]": ("agent-valuation", "VALUATION"),
         "[SKEPTIC]": ("agent-skeptic", "SKEPTIC"),
         "[RISK]": ("agent-risk", "RISK"),
-        "[JUDGE]": ("agent-verdict", "JUDGE")
+        "[JUDGE]": ("agent-verdict", "JUDGE"),
     }
     clean = clean_ai_text(text.replace("```html", "").replace("```", ""))
     parts = re.split(r'(\[[A-Z_]+\])', clean)
-    html = ""
-    curr_cls, label, buffer = "agent-box", "", ""
-    
-    for part in parts:
-        if part in mapping:
-            if buffer and label:
-                content = f"<div class='agent-content'>{buffer}</div>"
-                if "outlook" in curr_cls:
-                    html += f"<div class='{curr_cls}' style='border-left:5px solid #00f2fe; margin-bottom:15px;'><b>{label}</b><br>{content}</div>"
-                else:
-                    html += f"<div class='agent-row {curr_cls}'><div class='agent-label'>{label}</div>{content}</div>"
-            curr_cls, label = mapping[part]
-            buffer = ""
-        else: buffer += part
-    
-    # Flush last
-    if buffer and label:
-        content = f"<div class='agent-content'>{buffer}</div>"
-        if "outlook" in curr_cls:
-            html += f"<div class='{curr_cls}' style='border-left:5px solid #00f2fe; margin-bottom:15px;'><b>{label}</b><br>{content}</div>"
-        else:
-            html += f"<div class='agent-row {curr_cls}'><div class='agent-label'>{label}</div>{content}</div>"
-    return html
 
-# ==========================================
-# 5. MAIN UI LOGIC (AlphaLens Class)
-# ==========================================
+    buckets: Dict[str, str] = {}
+    cur = None
+    buf = []
+    for p in parts:
+        if p in mapping:
+            if cur and buf:
+                buckets[cur] = (buckets.get(cur, "") + "\n" + "".join(buf)).strip()
+            cur = p
+            buf = []
+        else:
+            buf.append(p)
+    if cur and buf:
+        buckets[cur] = (buckets.get(cur, "") + "\n" + "".join(buf)).strip()
+
+    order = [
+        "[SECTOR_OUTLOOK]",
+        "[FUNDAMENTAL]",
+        "[SENTIMENT]",
+        "[VALUATION]",
+        "[SKEPTIC]",
+        "[RISK]",
+        "[JUDGE]",
+    ]
+
+    html = ""
+    for tag in order:
+        if tag not in buckets or not buckets[tag].strip():
+            continue
+        cls, label = mapping[tag]
+        content = buckets[tag].strip()
+        # compact: remove excessive blank lines
+        content = re.sub(r"\n{3,}", "\n\n", content)
+        content_html = "<div class='agent-content'>" + content.replace("\n", "<br>") + "</div>"
+
+        if tag == "[SECTOR_OUTLOOK]":
+            html += (
+                f"<div class='{cls}' style='border-left:5px solid #00f2fe; margin-bottom:10px; padding:10px 12px;'>"
+                f"<b>{label}</b><br>{content_html}</div>"
+            )
+        elif tag == "[JUDGE]":
+            # Judge: visually distinct
+            html += (
+                f"<div class='agent-row {cls}' style='margin-top:10px; padding:12px 14px; border:1px solid rgba(255,0,85,0.45); background: rgba(255,0,85,0.06);'>"
+                f"<div class='agent-label' style='color:#ff0055; font-weight:800;'>{label}</div>{content_html}</div>"
+            )
+        else:
+            html += f"<div class='agent-row {cls}'><div class='agent-label'>{label}</div>{content_html}</div>"
+
+    return html
 def run():
     # --- 1. INITIALIZE STATE ---
     if "system_logs" not in st.session_state: st.session_state.system_logs = []
@@ -899,6 +991,9 @@ button{
         st.write("")
         run_ai = st.button("✨ GENERATE AI INSIGHTS", type="primary", use_container_width=True)
         refresh_prices = st.button("🔄 RELOAD MARKET DATA", use_container_width=True)
+        qc_on = st.toggle("🛡️ AI output quality check", value=st.session_state.get("qc_on", True), help="Checks AI text for plausibility and removes unsupported claims before display (adds a small latency).")
+        st.session_state.qc_on = qc_on
+
 
     # Reset sector selection when MARKET/WINDOW changes
     prev_market = st.session_state.last_market_key
@@ -1035,15 +1130,8 @@ button{
 
     st.markdown(f"""
     <div class='market-box'>
-    <div class='def-text'>
-    <b>DEFINITIONS</b> |
-    <b>Spread</b>: セクターRSの最大−最小(pt)。市場内の勝ち負けがどれだけ鮮明かを示す。大きいほどローテーションが効きやすく、指数より相対が重要になりやすい |
-    <b>Regime</b>: 200DMA判定（終値&gt;200DMA=Bull / 終値&lt;200DMA=Bear）。中期トレンドの地合いで、モメンタム要因の信頼度が変わる |
-    <b>NewsSent</b>: 見出しキーワード命中の合計（pos=+1/neg=−1）を−10〜+10にクリップ。短期の需給・期待変化（非構造情報）を粗く代理する |
-    <b>RS</b>: 相対リターン差(pt)=セクター(or銘柄)リターン−市場平均リターン
-    </div>
     <b class='orbitron'>MARKET PULSE ({s_date} - {e_date})</b><br>
-    <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='{s_cls}'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br><br>
+    <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='{s_cls}'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br>
     """ + market_to_html(force_nonempty_outlook_market(
         enforce_market_format(enforce_index_naming(generate_ai_content("market", {
             "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
@@ -1053,7 +1141,15 @@ button{
             "index_label": index_label,
             "nonce": st.session_state.ai_nonce
         }), index_label)), regime, b_stats["Ret"], spread, market_key
-    )) + "</div>", unsafe_allow_html=True)
+    )) + f"""
+    <div class='def-text'>
+    <b>DEFINITIONS</b> |
+    <b>Spread</b>: セクターRSの最大−最小(pt)。市場内の勝ち負けがどれだけ鮮明かを示す |
+    <b>Regime</b>: 200DMA判定（終値&gt;200DMA=Bull / 終値&lt;200DMA=Bear） |
+    <b>NewsSent</b>: 見出しキーワード命中（pos=+1/neg=−1）合計を−10〜+10にクリップ |
+    <b>RS</b>: 相対リターン差(pt)=セクター(or銘柄)リターン−市場平均リターン
+    </div>
+    </div>""", unsafe_allow_html=True)
 
     
     # If sector data is unavailable, stop after Market Pulse (degraded but stable)
@@ -1215,27 +1311,28 @@ button{
         f"MCap {sfloat(tp_f.get('MCap',0))/1e9:.1f}B, PER {dash(tp_f.get('PER'))}, PBR {dash(tp_f.get('PBR'))}"
     )
 
-    sec_ai_raw = generate_ai_content("sector_debate_fast", {
+    sec_ai_raw0 = generate_ai_content("sector_debate_fast", {
         "sec": target_sector,
-        # Avoid NameError: use market config name directly (with safe fallback)
         "market_name": m_cfg.get("name", str(market_key)),
         "sector_stats": sector_stats_str,
         "top": top3_str,
         "news": sec_news_str,
         "nonce": st.session_state.ai_nonce
     })
+    sec_ai_raw = quality_gate("sector", sec_ai_raw0, facts={
+        "kind": "sector",
+        "market": m_cfg.get("name", str(market_key)),
+        "sector": target_sector,
+        "sector_stats": sector_stats_str,
+        "top_candidate": top3_str,
+        "news": sec_news_str,
+    }, nonce=st.session_state.ai_nonce)
+
     sec_ai_txt = clean_ai_text(enforce_da_dearu_soft(sec_ai_raw))
     sec_ai_html = parse_agent_debate(sec_ai_txt) if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt) else sec_ai_txt
     st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
     # Download Council Log (before leaderboard)
     st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_target_sector_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-
-    st.caption(
-        "DEFINITIONS | Apex: zscore合成=weight_mom*z(RS)+(0.8-weight_mom)*z(Accel)+0.2*z(Ret) | "
-        "RS: Ret(銘柄)−Ret(市場平均) | Accel: 直近半期間リターン−(全期間リターン/2) | "
-        "HighDist: 直近価格の52週高値からの乖離(%) | MaxDD: 期間内最大ドローダウン(%) | "
-        "PER/PBR/ROE等: yfinance.Ticker().info（負のPER/PBRは除外、欠損は'-'）"
-    )
     
     ev_fund = fetch_fundamentals_batch(top3["Ticker"].tolist()).reset_index()
     ev_df = top3.merge(ev_fund, on="Ticker", how="left")
@@ -1259,15 +1356,7 @@ button{
     down = computable_cnt - up
     st.markdown(f"##### LEADERBOARD (Universe: {universe_cnt} | Computable: {computable_cnt} | Up: {up} | Down: {down})")
     
-    st.caption(
-        "SOURCE & NOTES | Price: yfinance.download(auto_adjust=True) | Fundamentals: yfinance.Ticker().info | "
-        "Up/Down: 期間リターンが + の銘柄数 / それ以外（0以下）の銘柄数 | "
-
-        "PER/PBR: 負値は除外 | ROE/RevGrow/OpMargin/Beta: 取得できる場合のみ表示 | "
-        "Apex/RS/Accel等は本アプリ算出"
-    )
-    
-    tickers_for_fund = df.head(30)["Ticker"].tolist()
+    tickers_for_fund = df.head(20)["Ticker"].tolist()
     with st.spinner("Fetching Fundamentals..."):
         rest = fetch_fundamentals_batch(tickers_for_fund).reset_index()
         df = df.merge(rest, on="Ticker", how="left", suffixes=("", "_rest"))
@@ -1310,6 +1399,19 @@ button{
         },
         hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
     )
+
+    st.caption(
+        "DEFINITIONS | Apex: zscore合成=weight_mom*z(RS)+(0.8-weight_mom)*z(Accel)+0.2*z(Ret) | "
+        "RS: Ret(銘柄)−Ret(市場平均) | Accel: 直近半期間リターン−(全期間リターン/2) | "
+        "HighDist: 直近価格の52週高値からの乖離(%) | MaxDD: 期間内最大ドローダウン(%) | "
+        "PER/PBR/ROE等: yfinance.Ticker().info（負のPER/PBRは除外、欠損は'-'）"
+    )
+    st.caption(
+        "SOURCE & NOTES | Price: yfinance.download(auto_adjust=True) | Fundamentals: yfinance.Ticker().info | "
+        "Up/Down: 期間リターンが + の銘柄数 / それ以外（0以下）の銘柄数 | "
+        "PER/PBR: 負値は除外 | ROE/RevGrow/OpMargin/Beta: 取得できる場合のみ表示 | "
+        "Apex/RS/Accel等は本アプリ算出"
+    )
     
 
     # 6. Deep Dive
@@ -1323,11 +1425,30 @@ button{
     st.divider()
     
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    st.markdown(f"### 🦅 🤖 AI EQUITY ANALYST: {top['Name']}")
+    st.markdown(f"### 🦅 🤖 AI EQUITY ANALYST {top['Name']}")
     st.caption(f"Data Timestamp: {now_str} | Source: yfinance (PER/PBR exclude negatives)")
     
     news_items, news_context, _, _ = get_news_consolidated(top["Ticker"], top["Name"], market_key, limit_each=10)
     fund_data = get_fundamental_data(top["Ticker"])
+    overview = ""
+    try:
+        bsum = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
+        if len(bsum) > 280:
+            bsum = bsum[:280].rstrip() + "…"
+        sec_name = str(fund_data.get("Sector") or "-")
+        ind_name = str(fund_data.get("Industry") or "-")
+        mcap = fund_data.get("MCap") or fund_data.get("MarketCap") or 0
+        mcap_disp = dash(mcap, "%.0f")
+        if isinstance(mcap, (int, float)) and mcap:
+            if mcap >= 1e12:
+                mcap_disp = f"{mcap/1e12:.1f}T"
+            elif mcap >= 1e9:
+                mcap_disp = f"{mcap/1e9:.1f}B"
+            elif mcap >= 1e6:
+                mcap_disp = f"{mcap/1e6:.0f}M"
+        overview = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Summary:{bsum}"
+    except Exception:
+        overview = ""
     ed = fetch_earnings_dates(top["Ticker"]).get("EarningsDate", "-")
     bench_fd = get_fundamental_data(bench)
     
@@ -1351,15 +1472,28 @@ button{
     
     fund_str = f"PER:{stock_per}, PBR:{dash(fund_data.get('PBR'))}, PEG:{dash(fund_data.get('PEG'))}, Target:{dash(fund_data.get('Target'))}"
 
-    report_txt = generate_ai_content("stock_report", {
+    report_raw0 = generate_ai_content("stock_report", {
         "name": top["Name"], "ticker": top["Ticker"],
-        "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
+        "overview": overview, "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
         "earnings_date": ed, "price_action": price_act, "nonce": st.session_state.ai_nonce
     })
-    
+    report_raw = quality_gate("equity", report_raw0, facts={
+        "kind": "equity",
+        "market": m_cfg.get("name", str(market_key)),
+        "ticker": top["Ticker"],
+        "name": top["Name"],
+        "overview": overview,
+        "fundamentals": fund_str,
+        "price_action": price_act,
+        "earnings_date": ed,
+        "news": news_context,
+    }, nonce=st.session_state.ai_nonce)
+    report_txt = clean_ai_text(enforce_da_dearu_soft(report_raw))
+
+
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI ANALYST BRIEFING</b><br>{report_txt}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_txt}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
@@ -1367,11 +1501,6 @@ button{
         with lc1: safe_link_button("OFFICIAL", links["official"], use_container_width=True)
         with lc2: safe_link_button("IR SEARCH", links["ir_search"], use_container_width=True)
         with lc3: safe_link_button("EARNINGS DECK", links["earnings_deck"], use_container_width=True)
-
-        st.caption(
-            "PEER LOGIC | Nearest Market Cap: |MCap(peer)−MCap(target)|が小さい順に抽出（同一セクター内） | "
-            "SOURCE: yfinance.Ticker().info（欠損は'-'）"
-        )
         try:
             target_mcap = top["MCap"] if pd.notna(top["MCap"]) else 0
             df_peers_base = df_sorted.copy()
@@ -1379,7 +1508,12 @@ button{
             df_peers = df_peers_base.sort_values("Dist").iloc[1:5]
             st.dataframe(df_peers[["Name", "ROE", "RevGrow", "PER", "PBR", "RS", "12M"]], hide_index=True)
         except: pass
-        st.download_button("DOWNLOAD ANALYST NOTE", report_txt, f"analyst_note_{top['Ticker']}.txt")
+        
+        st.caption(
+            "PEER LOGIC | Nearest Market Cap: |MCap(peer)−MCap(target)|が小さい順に抽出（同一セクター内） | "
+            "SOURCE: yfinance.Ticker().info（欠損は'-'）"
+        )
+        st.download_button("DOWNLOAD ANALYST NOTE", report_txt, f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
     with nc2:
         st.caption("INTEGRATED NEWS FEED")
