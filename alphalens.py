@@ -2,7 +2,6 @@ import os
 import time
 import re
 import math
-import json
 import urllib.parse
 import urllib.request
 import traceback
@@ -280,70 +279,6 @@ def clean_ai_text(text: str) -> str:
     bad = ["不明", "わからない", "分からない", "unknown"]
     for w in bad: text = re.sub(rf"(?m)^.*{re.escape(w)}.*$\n?", "", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
-
-
-# --- QUALITY GATE (AI output sanity check) ---
-# For commercial use: run a lightweight "accuracy & plausibility" pass before display.
-# This pass MUST NOT introduce new facts. It can only soften/qualify unsupported claims,
-# remove fake citations, and enforce the required structure.
-@st.cache_data(ttl=86400, show_spinner=False)
-def _ai_quality_gate(kind: str, raw_text: str, facts_json: str, nonce: int = 0) -> str:
-    if not raw_text or raw_text.strip() == "AI OFFLINE":
-        return raw_text
-    if not HAS_LIB or not API_KEY:
-        return raw_text
-    try:
-        model = genai.GenerativeModel("gemini-2.0-flash-lite")
-        prompt = f"""
-あなたは金融プロ向けアプリの「品質監査エディタ」だ。次の原則を厳守せよ。
-- 追加の調査は禁止。与えられたFACTS以外の新情報・新数値・新固有名詞（企業名/指数名/記事名/媒体名/日付）を作るな。
-- 原文の骨子は保ちつつ、嘘っぽい断定・不自然な因果・根拠不明な推薦・一般論を削る/弱める。
-- 「〜と言われている」「注視」「不透明」などの逃げ表現は削り、必要なら「仮説」として短く書け。
-- 架空の出典（Reutersが〜等）を生成しない。出典に触れるならFACTSのニュース要約範囲に限定せよ。
-- kind=sector の場合、必ず [SECTOR_OUTLOOK] → [TOP_PICK] → [RISK_TRIGGERS] → [JUDGE] の順を維持し、タグを消さない。
-- kind=equity の場合、過剰な断定を避け、監視ポイントは「当該銘柄に固有」にする。
-
-FACTS(JSON):
-{facts_json}
-
-TEXT:
-{raw_text}
-
-OUTPUT:
-修正後TEXTのみを出力（余計な前置き禁止）。
-"""
-        out = model.generate_content(prompt)
-        t = getattr(out, "text", "") or ""
-        t = t.strip()
-        return t if t else raw_text
-    except Exception:
-        return raw_text
-
-def _heuristic_gate(text: str) -> str:
-    if not text: 
-        return text
-    # Remove common meta/preambles and overly confident phrasing
-    t = text
-    t = re.sub(r"(?m)^\s*(はい、)?\s*承知(いたしました|しました)。?.*$\n?", "", t)
-    t = re.sub(r"(?m)^\s*以下に.*作成(する|します)。?.*$\n?", "", t)
-    t = re.sub(r"(?m)^\s*アナリストレポート.*$\n?", "", t)
-    # Soften absolute claims
-    t = re.sub(r"(必ず|確実に|間違いなく)", "可能性が高い", t)
-    return re.sub(r"\n{3,}", "\n\n", t).strip()
-
-def quality_gate(kind: str, raw_text: str, facts: Dict[str, Any], nonce: int = 0) -> str:
-    # First heuristic pass (cheap, always)
-    base = _heuristic_gate(raw_text)
-    # Optional AI pass (accurate editor). Can be disabled for speed.
-    qc_on = st.session_state.get("qc_on", True)
-    if not qc_on:
-        return base
-    try:
-        facts_json = json.dumps(facts, ensure_ascii=False)[:8000]
-    except Exception:
-        facts_json = "{}"
-    refined = _ai_quality_gate(kind, base, facts_json, nonce=nonce)
-    return _heuristic_gate(refined)
 
 def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: float, market_key: str) -> str:
     m = re.search(r"【今後3ヶ月[^】]*】\n?(.*)", text, flags=re.DOTALL)
@@ -673,12 +608,13 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
 
         出力フォーマット（タグ厳守。全体で900〜1400字目安）:
         [SECTOR_OUTLOOK] セクター全体の3ヶ月見通し（3〜5文）
+        [TOP_PICK] トップピック1銘柄の推奨（ティッカー必須）。結論→根拠（モメンタム/ニュース/RS）→想定上昇のドライバー（5〜7文）
         [FUNDAMENTAL] バリュエーション/収益性の観点でトップ候補を評価（5〜7文）
         [SENTIMENT] ニュースとモメンタムで上がりやすさを評価（5〜7文。ニュース根拠2本以上）
         [VALUATION] PER/PBR等が使える場合だけ短く。使えない場合は触れない（3〜5文）
         [SKEPTIC] 反対意見（何が外れるとダメか）（4〜6文）
         [RISK] リスクとトリガー（箇条書き3つ）
-        [JUDGE] 合議結論。トップピック1銘柄（ティッカー込み）＋3ヶ月の主ドライバー2つ＋次に見るべき指標1つ。
+        [JUDGE] 合議結論。上のTOP_PICKを前提に、反証を踏まえた最終判断＋3ヶ月の主ドライバー2つ＋次に見るべき指標1つ。
         """
     elif prompt_key == "sector_debate":
         p = f"""
@@ -791,6 +727,7 @@ def parse_agent_debate(text: str) -> str:
     """
     mapping = {
         "[SECTOR_OUTLOOK]": ("agent-outlook", "SECTOR OUTLOOK"),
+        "[TOP_PICK]": ("agent-toppick", "TOP PICK"),
         "[FUNDAMENTAL]": ("agent-fundamental", "FUNDAMENTAL"),
         "[SENTIMENT]": ("agent-sentiment", "SENTIMENT"),
         "[VALUATION]": ("agent-valuation", "VALUATION"),
@@ -817,6 +754,7 @@ def parse_agent_debate(text: str) -> str:
 
     order = [
         "[SECTOR_OUTLOOK]",
+        "[TOP_PICK]",
         "[FUNDAMENTAL]",
         "[SENTIMENT]",
         "[VALUATION]",
@@ -839,6 +777,11 @@ def parse_agent_debate(text: str) -> str:
             html += (
                 f"<div class='{cls}' style='border-left:5px solid #00f2fe; margin-bottom:10px; padding:10px 12px;'>"
                 f"<b>{label}</b><br>{content_html}</div>"
+            )
+        elif tag == "[TOP_PICK]":
+            html += (
+                f"<div class='agent-row {cls}' style='margin-bottom:10px; padding:10px 12px; border-left:5px solid #ff0055; background: rgba(255,0,85,0.04);'>"
+                f"<div class='agent-label' style='color:#ff77aa; font-weight:800;'>{label}</div>{content_html}</div>"
             )
         elif tag == "[JUDGE]":
             # Judge: visually distinct
@@ -991,9 +934,6 @@ button{
         st.write("")
         run_ai = st.button("✨ GENERATE AI INSIGHTS", type="primary", use_container_width=True)
         refresh_prices = st.button("🔄 RELOAD MARKET DATA", use_container_width=True)
-        qc_on = st.toggle("🛡️ AI output quality check", value=st.session_state.get("qc_on", True), help="Checks AI text for plausibility and removes unsupported claims before display (adds a small latency).")
-        st.session_state.qc_on = qc_on
-
 
     # Reset sector selection when MARKET/WINDOW changes
     prev_market = st.session_state.last_market_key
@@ -1171,20 +1111,33 @@ button{
         st.session_state.selected_sector = best_row["Sector"]
 
     click_sec = st.session_state.selected_sector
-    colors = []
-    for _, r in sdf_disp.iterrows():
-        c = "#00f2fe" if float(r["RS"]) >= 0 else "#ff0055"
-        if r["Sector"] == click_sec: c = "#e6e6e6"
-        colors.append(c)
+
+    # --- Gradient coloring by RS (pro look) ---
+    rs_vals = pd.to_numeric(sdf_disp["RS"], errors="coerce").fillna(0.0)
+    cmin = float(rs_vals.min()) if len(rs_vals) else -1.0
+    cmax = float(rs_vals.max()) if len(rs_vals) else 1.0
+    # Avoid zero-range colorbar
+    if abs(cmax - cmin) < 1e-9:
+        cmin, cmax = cmin - 1.0, cmax + 1.0
+
+    # Highlight selected sector with outline (no color override to keep gradient)
+    line_w = [2.5 if s == click_sec else 0.0 for s in sdf_disp["Sector"].tolist()]
+    line_c = ["#e6e6e6" if s == click_sec else "rgba(0,0,0,0)" for s in sdf_disp["Sector"].tolist()]
 
     # Plot
     fig = px.bar(sdf_disp, x="RS", y="Label", orientation='h', title=f"Relative Strength ({lookback_key})")
     fig.update_traces(
         customdata=np.stack([sdf_disp["Ret"]], axis=-1),
         hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>",
-        marker_color=colors
+        marker=dict(
+            color=rs_vals,
+            colorscale="RdYlGn",
+            cmin=cmin,
+            cmax=cmax,
+            line=dict(color=line_c, width=line_w),
+        ),
     )
-    # Fix Plotly sorting (array order)
+# Fix Plotly sorting (array order)
     fig.update_layout(height=420, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
                       font_color='#e0e0e0', font_family="JetBrains Mono", 
                       xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True, categoryorder="array", categoryarray=sdf_disp["Label"].tolist()[::-1]))
@@ -1311,23 +1264,15 @@ button{
         f"MCap {sfloat(tp_f.get('MCap',0))/1e9:.1f}B, PER {dash(tp_f.get('PER'))}, PBR {dash(tp_f.get('PBR'))}"
     )
 
-    sec_ai_raw0 = generate_ai_content("sector_debate_fast", {
+    sec_ai_raw = generate_ai_content("sector_debate_fast", {
         "sec": target_sector,
+        # Avoid NameError: use market config name directly (with safe fallback)
         "market_name": m_cfg.get("name", str(market_key)),
         "sector_stats": sector_stats_str,
         "top": top3_str,
         "news": sec_news_str,
         "nonce": st.session_state.ai_nonce
     })
-    sec_ai_raw = quality_gate("sector", sec_ai_raw0, facts={
-        "kind": "sector",
-        "market": m_cfg.get("name", str(market_key)),
-        "sector": target_sector,
-        "sector_stats": sector_stats_str,
-        "top_candidate": top3_str,
-        "news": sec_news_str,
-    }, nonce=st.session_state.ai_nonce)
-
     sec_ai_txt = clean_ai_text(enforce_da_dearu_soft(sec_ai_raw))
     sec_ai_html = parse_agent_debate(sec_ai_txt) if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt) else sec_ai_txt
     st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
@@ -1472,28 +1417,15 @@ button{
     
     fund_str = f"PER:{stock_per}, PBR:{dash(fund_data.get('PBR'))}, PEG:{dash(fund_data.get('PEG'))}, Target:{dash(fund_data.get('Target'))}"
 
-    report_raw0 = generate_ai_content("stock_report", {
+    report_txt = generate_ai_content("stock_report", {
         "name": top["Name"], "ticker": top["Ticker"],
         "overview": overview, "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
         "earnings_date": ed, "price_action": price_act, "nonce": st.session_state.ai_nonce
     })
-    report_raw = quality_gate("equity", report_raw0, facts={
-        "kind": "equity",
-        "market": m_cfg.get("name", str(market_key)),
-        "ticker": top["Ticker"],
-        "name": top["Name"],
-        "overview": overview,
-        "fundamentals": fund_str,
-        "price_action": price_act,
-        "earnings_date": ed,
-        "news": news_context,
-    }, nonce=st.session_state.ai_nonce)
-    report_txt = clean_ai_text(enforce_da_dearu_soft(report_raw))
-
-
+    
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_txt}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><div class='mini mono' style='opacity:0.95;margin-top:2px;margin-bottom:6px;'>{overview}</div><br>{report_txt}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
