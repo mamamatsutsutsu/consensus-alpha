@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.colors as pcolors
 import streamlit as st
 import yfinance as yf
 
@@ -259,73 +260,58 @@ def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
     return out
 
 # --- AI & TEXT ---
-# NOTE: Secrets/API keys are resolved lazily to avoid import-time failures.
-_GENAI = None
-_HAS_GENAI = None
-_GENAI_DIAG = {"online": False, "reason": "not_initialized", "key_found": False}
-
-def _resolve_gemini_api_key() -> Optional[str]:
-    """Resolve Gemini API key from Streamlit secrets or environment variables."""
-    key = None
+def _resolve_gemini_api_key() -> str:
+    # Streamlit Cloud: prefer st.secrets; fall back to env for local/dev
     try:
-        key = (
-            st.secrets.get("GEMINI_API_KEY", None)
-            or st.secrets.get("GOOGLE_API_KEY", None)
-            or st.secrets.get("GOOGLE_GENERATIVEAI_API_KEY", None)
-        )
+        sk = st.secrets
+        for k in ("GEMINI_API_KEY", "GOOGLE_GENERATIVEAI_API_KEY", "GOOGLE_API_KEY"):
+            v = sk.get(k)
+            if v and isinstance(v, str) and v.strip():
+                return v.strip()
     except Exception:
-        key = None
-    return key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_GENERATIVEAI_API_KEY")
+        pass
+    for k in ("GEMINI_API_KEY", "GOOGLE_GENERATIVEAI_API_KEY", "GOOGLE_API_KEY"):
+        v = os.getenv(k)
+        if v and v.strip():
+            return v.strip()
+    return ""
 
-def init_genai() -> bool:
-    """Initialize google.generativeai once. Returns True if available+configured.
-
-    This is intentionally *lazy* to avoid Streamlit import-time crashes.
-    """
-    global _GENAI, _HAS_GENAI, _GENAI_DIAG
-    if _HAS_GENAI is not None:
-        return bool(_HAS_GENAI)
+@st.cache_resource
+def _init_gemini(api_key: str):
+    # Returns (client, status_dict). Never raises.
+    status = {"online": False, "reason": "", "has_lib": False, "key_present": bool(api_key)}
+    if not api_key:
+        status["reason"] = "api_key_missing"
+        return None, status
     try:
-        import google.generativeai as genai  # type: ignore
-        key = _resolve_gemini_api_key()
-        _GENAI_DIAG["key_found"] = bool(key)
-        _GENAI = genai
-        if not key:
-            _HAS_GENAI = False
-            _GENAI_DIAG["online"] = False
-            _GENAI_DIAG["reason"] = "api_key_missing"
-            return False
+        import google.generativeai as genai  # lazy import
+        status["has_lib"] = True
         try:
-            genai.configure(api_key=key)
-            _HAS_GENAI = True
-            _GENAI_DIAG["online"] = True
-            _GENAI_DIAG["reason"] = "ok"
-            return True
+            genai.configure(api_key=api_key)
         except Exception as e:
-            _HAS_GENAI = False
-            _GENAI_DIAG["online"] = False
-            _GENAI_DIAG["reason"] = f"configure_failed: {type(e).__name__}"
-            return False
-    except ModuleNotFoundError:
-        _GENAI = None
-        _HAS_GENAI = False
-        _GENAI_DIAG["online"] = False
-        _GENAI_DIAG["reason"] = "google-generativeai_not_installed"
-        return False
+            status["reason"] = f"configure_failed: {type(e).__name__}"
+            return None, status
+        # Prefer faster models; fall back if unavailable
+        status["online"] = True
+        status["reason"] = ""
+        return genai, status
     except Exception as e:
-        _GENAI = None
-        _HAS_GENAI = False
-        _GENAI_DIAG["online"] = False
-        _GENAI_DIAG["reason"] = f"init_failed: {type(e).__name__}"
-        return False
+        status["reason"] = f"lib_import_failed: {type(e).__name__}"
+        return None, status
 
-def get_genai():
-    init_genai()
-    return _GENAI
+def get_ai_status() -> Dict[str, Any]:
+    api_key = _resolve_gemini_api_key()
+    client, stt = _init_gemini(api_key)
+    stt = dict(stt)
+    stt["online"] = bool(client) and bool(stt.get("online"))
+    return stt
 
-def genai_diag() -> Dict[str, Any]:
-    init_genai()
-    return dict(_GENAI_DIAG)
+def _get_ai_client():
+    api_key = _resolve_gemini_api_key()
+    client, stt = _init_gemini(api_key)
+    # keep a copy for UI diagnostics
+    st.session_state["ai_status"] = dict(stt)
+    return client
 
 def clean_ai_text(text: str) -> str:
     text = text.replace("```text", "").replace("```", "")
@@ -531,14 +517,22 @@ def sector_debate_quality_ok(text: str) -> bool:
 
 @st.cache_data(ttl=3600)
 def generate_ai_content(prompt_key: str, context: Dict) -> str:
-    genai = get_genai()
-    if not init_genai() or genai is None:
-        return "AI OFFLINE"
+    client = _get_ai_client()
+    if not client: return "AI OFFLINE"
     
-    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"]
     p = ""
     market_n = context.get('market_name', 'Global')
     today_str = datetime.now().strftime('%Y年%m月%d日')
+    # Candidate schedule slots used in prompts (avoid NameError)
+    slot_line = context.get('slot_line')
+    if not slot_line:
+        slots = context.get('slots') or context.get('candidate_slots') or context.get('candidate_dates')
+        if isinstance(slots, (list, tuple)) and slots:
+            slot_line = ' / '.join([str(x) for x in list(slots)[:8]])
+        else:
+            base_dt = datetime.now()
+            slot_line = ' / '.join([(base_dt + timedelta(days=d)).strftime('%Y-%m-%d') for d in (7, 14, 21, 28, 35, 42)])
     
     if prompt_key == "market":
         p = f"""
@@ -655,7 +649,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
             extra = "\n\n重要: 前回出力が短すぎ/ルール違反だった。各タグの分量を1.6倍に増やし、必ず「セクター全体→個別銘柄」の順で書け。抽象語禁止。"
         for m in models:
             try:
-                model = genai.GenerativeModel(m)
+                model = client.GenerativeModel(m)
                 text = model.generate_content(p + extra).text
                 text = clean_ai_text(enforce_da_dearu_soft(text))
                 last_text = text
@@ -718,7 +712,12 @@ def run():
     if "last_lookback_key" not in st.session_state: st.session_state.last_lookback_key = None
     if "ai_nonce" not in st.session_state: st.session_state.ai_nonce = 0
 
-    # --- UI STYLES ---
+    
+    # --- AI STATUS (DIAGNOSTICS) ---
+    ai_status = get_ai_status()
+    badge = "AI ONLINE" if ai_status.get("online") else "AI OFFLINE"
+    badge_cls = "badge-ai-on" if ai_status.get("online") else "badge-ai-off"
+# --- UI STYLES ---
     st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;600;700&family=Orbitron:wght@400;600;900&family=JetBrains+Mono:wght@300;400;600&family=M+PLUS+1+Code:wght@300;400;700&display=swap');
@@ -743,6 +742,13 @@ html, body, .stApp{
   line-height: 1.85 !important;
 }
 *{ letter-spacing: 0.02em !important; }
+
+
+/* AI Status Badge */
+.badge-ai{display:inline-block;padding:6px 10px;border-radius:999px;font-family:'Orbitron',sans-serif;font-size:12px;letter-spacing:0.08em;border:1px solid rgba(255,255,255,0.12);backdrop-filter: blur(8px);}
+.badge-ai-on{background: rgba(0,242,254,0.12); color:#00f2fe; box-shadow: 0 0 18px rgba(0,242,254,0.25);}
+.badge-ai-off{background: rgba(255,0,85,0.10); color:#ff0055; box-shadow: 0 0 18px rgba(255,0,85,0.18);}
+.glow-title{ text-shadow: 0 0 22px rgba(0,242,254,0.35), 0 0 40px rgba(255,0,85,0.12); }
 
 /* Headings / brand */
 h1, h2, h3, .brand, .orbitron, div[data-testid="stMetricValue"]{
@@ -832,29 +838,13 @@ button{
   font-family:'Orbitron',sans-serif; font-size:12px; color:#00f2fe; text-align:center;
   margin:8px 0 6px 0; padding:8px; border:1px solid #223; background:#050b0c;
 }
-.brand-row{display:flex;align-items:center;gap:14px}
-.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-family:'Orbitron',sans-serif;font-size:11px;border:1px solid #333}
-.badge.ok{color:#00f2fe;border-color:#00f2fe;box-shadow:0 0 14px rgba(0,242,254,0.35)}
-.badge.warn{color:#ffcc00;border-color:#ffcc00;box-shadow:0 0 14px rgba(255,204,0,0.25)}
-.brand{
-  text-shadow: 0 0 18px rgba(0,242,254,0.25), 0 0 42px rgba(255,0,85,0.12);
-}
-body{
-  background: radial-gradient(1200px 800px at 10% 10%, rgba(0,242,254,0.08), transparent 60%),
-              radial-gradient(1200px 800px at 90% 20%, rgba(255,0,85,0.06), transparent 60%),
-              radial-gradient(900px 600px at 60% 90%, rgba(255,204,0,0.05), transparent 55%),
-              #050506;
-}
 </style>
 """, unsafe_allow_html=True)
     
-    diag = genai_diag()
-    ai_badge = "<span class='badge ok'>AI ONLINE</span>" if diag.get('online') else "<span class='badge warn'>AI OFFLINE</span>"
-    st.markdown(f"<div class='brand-row'><h1 class='brand'>ALPHALENS</h1>{ai_badge}</div>", unsafe_allow_html=True)
-    if not diag.get('online'):
-        with st.expander('Why AI is offline?', expanded=False):
-            st.code(str(diag), language='json')
-
+    st.markdown(f"<div style='display:flex;align-items:center;gap:12px;'><h1 class='brand glow-title' style='margin:0;'>ALPHALENS</h1><span class='badge-ai {badge_cls} badge-ai'>{badge}</span></div>", unsafe_allow_html=True)
+    if not ai_status.get('online'):
+        with st.expander("Why AI is offline?", expanded=False):
+            st.code(str(ai_status), language='json')
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
@@ -863,25 +853,37 @@ body{
     with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
     with c4: 
         st.write("")
-        now_ts = time.time()
-        last_ts = st.session_state.get('last_sync_ts', 0.0)
-        sync_label = "SYNC" if (now_ts - last_ts) > 2.0 else "SYNCED ✓"
-        sync = st.button(sync_label, type="primary", use_container_width=True, key='sync_btn')
+        label = "SYNCED ✓" if st.session_state.get('sync_flash_until',0) > time.time() else "SYNC"
+        sync = st.button(label, type="primary", use_container_width=True)
 
-    # Logic: Reset Sector if Market OR Lookback changes
+
+# Logic: Reset Sector if Market OR Lookback changes
     if (st.session_state.last_market_key != market_key) or (st.session_state.last_lookback_key != lookback_key):
         st.session_state.selected_sector = None
         st.session_state.last_market_key = market_key
         st.session_state.last_lookback_key = lookback_key
     
     if sync:
-        st.session_state['last_sync_ts'] = time.time()
-        try: st.toast('Synced market data', icon='🔄')
-        except Exception: pass
         st.session_state.selected_sector = None
         st.session_state.ai_nonce += 1
 
     m_cfg = MARKETS[market_key]
+    
+    # --- Sidebar: Diagnostics (pro users) ---
+    with st.sidebar:
+        st.markdown("<div class='orbitron' style='font-size:14px;color:#00f2fe;'>DIAGNOSTICS</div>", unsafe_allow_html=True)
+        st.caption("For professional use: status, cache, and logs.")
+        st.markdown(f"<span class='badge-ai {badge_cls} badge-ai'>{badge}</span>", unsafe_allow_html=True)
+        if not ai_status.get("online"):
+            st.code(str(ai_status), language="json")
+        if st.button("Clear cache", use_container_width=True):
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.toast("Cache cleared", icon="🧹")
+            st.rerun()
+        with st.expander("System logs", expanded=False):
+            logs = st.session_state.get("system_logs", [])
+            st.text("\n".join(logs[-120:]) if logs else "(empty)")
     win = LOOKBACKS[lookback_key]
     bench = m_cfg["bench"]
     
@@ -894,19 +896,6 @@ body{
     
     core_df = st.session_state.get("core_df", pd.DataFrame())
     if core_df.empty or len(core_df) < win + 1: st.warning("WAITING FOR DATA..."); return
-    # Date range label for UI (based on benchmark window)
-    try:
-        _idx = core_df[bench].dropna().tail(win + 1).index
-        if len(_idx) >= 2:
-            s_date = pd.to_datetime(_idx[0]).strftime('%Y-%m-%d')
-            e_date = pd.to_datetime(_idx[-1]).strftime('%Y-%m-%d')
-        else:
-            s_date = '-'
-            e_date = '-'
-    except Exception:
-        s_date = '-'
-        e_date = '-'
-
 
     audit = audit_data_availability(core_tickers, core_df, win)
     if bench not in audit["list"]: st.error("BENCHMARK MISSING"); return
@@ -930,22 +919,16 @@ body{
     # Spread & NewsSent (SAFE)
     spread = float(sdf["RS"].max() - sdf["RS"].min()) if "RS" in sdf.columns and len(sdf) else 0.0
 
-    # News consolidation (must come before using m_sent/m_meta)
-    market_context = ""
-    m_sent = 0
-    m_meta = {}
-    try:
-        _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
-    except Exception:
-        # Fail closed: keep defaults (AI/news features can be offline)
-        market_context = ""
-
     # News sentiment summary (clip -10..+10), label & hit counts
     s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
     lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
     hit_pos = int(m_meta.get("pos", 0)) if isinstance(m_meta, dict) else 0
     hit_neg = int(m_meta.get("neg", 0)) if isinstance(m_meta, dict) else 0
 
+    
+    s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
+    e_date = core_df.index[-1].strftime('%Y/%m/%d')
+    _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
     
     # Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
     index_name = get_name(bench)
@@ -987,20 +970,23 @@ body{
         st.session_state.selected_sector = best_row["Sector"]
 
     click_sec = st.session_state.selected_sector
-    colors = []
-    for _, r in sdf_disp.iterrows():
-        c = "#00f2fe" if float(r["RS"]) >= 0 else "#ff0055"
-        if r["Sector"] == click_sec: c = "#e6e6e6"
-        colors.append(c)
+    rs_vals = sdf_disp["RS"].astype(float).values
+    rs_min, rs_max = float(np.nanmin(rs_vals)), float(np.nanmax(rs_vals))
+    denom = (rs_max - rs_min) if (rs_max - rs_min) != 0 else 1.0
+    rs_norm = [(float(v) - rs_min) / denom for v in rs_vals]
+    colors = [pcolors.sample_colorscale("RdYlGn", [n])[0] for n in rs_norm]
+    # highlight selected sector
+    if click_sec in list(sdf_disp["Sector"].values):
+        for i, sec in enumerate(list(sdf_disp["Sector"].values)):
+            if sec == click_sec:
+                colors[i] = "#e6e6e6"
 
     # Plot
     fig = px.bar(sdf_disp, x="RS", y="Label", orientation='h', title=f"Relative Strength ({lookback_key})")
     fig.update_traces(
         customdata=np.stack([sdf_disp["Ret"]], axis=-1),
         hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>",
-        marker_color=sdf_disp['RS'], marker_colorscale='RdYlGn', marker_cmin=float(sdf_disp['RS'].min()), marker_cmax=float(sdf_disp['RS'].max()), marker_showscale=False,
-        marker_line_color=[('#e6e6e6' if (sec==click_sec) else 'rgba(0,0,0,0)') for sec in sdf_disp['Sector']],
-        marker_line_width=[2 if (sec==click_sec) else 0 for sec in sdf_disp['Sector']]
+        marker_color=colors
     )
     # Fix Plotly sorting (array order)
     fig.update_layout(height=420, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
@@ -1161,8 +1147,8 @@ body{
     df_disp["Beta"] = df_disp["Beta"].apply(lambda x: dash(x, "%.2f"))
 
     df_sorted = df_disp.sort_values("MCap", ascending=False)
-    
-    st.markdown("<div class='action-call'>👆 Select one stock to generate the AI agents' analysis note below</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='action-call'>👆 Select ONE stock to generate the AI agents' analysis note below</div>", unsafe_allow_html=True)
 
     event = st.dataframe(
         df_sorted[["Name", "Ticker", "MCapDisp", "ROE", "RevGrow", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
@@ -1175,14 +1161,15 @@ body{
             "PBR": st.column_config.TextColumn("PBR"),
             "ROE": st.column_config.TextColumn("ROE"),
             "RevGrow": st.column_config.TextColumn("RevGrow"),
-            "OpMargin": st.column_config.TextColumn("OpMargin"),
-            "Beta": st.column_config.TextColumn("Beta"),
             "1M": st.column_config.NumberColumn(format="%.1f%%"),
             "12M": st.column_config.NumberColumn(format="%.1f%%"),
         },
-        hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
+        hide_index=True,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="stock_table",
     )
-    
     
     # 6. Deep Dive
     top = df_sorted.iloc[0]
