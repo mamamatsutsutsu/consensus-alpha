@@ -839,6 +839,19 @@ button{
     
     core_df = st.session_state.get("core_df", pd.DataFrame())
     if core_df.empty or len(core_df) < win + 1: st.warning("WAITING FOR DATA..."); return
+    # Date range label for UI (based on benchmark window)
+    try:
+        _idx = core_df[bench].dropna().tail(win + 1).index
+        if len(_idx) >= 2:
+            s_date = pd.to_datetime(_idx[0]).strftime('%Y-%m-%d')
+            e_date = pd.to_datetime(_idx[-1]).strftime('%Y-%m-%d')
+        else:
+            s_date = '-'
+            e_date = '-'
+    except Exception:
+        s_date = '-'
+        e_date = '-'
+
 
     audit = audit_data_availability(core_tickers, core_df, win)
     if bench not in audit["list"]: st.error("BENCHMARK MISSING"); return
