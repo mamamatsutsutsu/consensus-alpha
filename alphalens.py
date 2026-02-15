@@ -278,7 +278,27 @@ def clean_ai_text(text: str) -> str:
     text = re.sub(r"(?m)^\s*ご依頼(.*)ありがとうございます。?.*$\n?", "", text)
     bad = ["不明", "わからない", "分からない", "unknown"]
     for w in bad: text = re.sub(rf"(?m)^.*{re.escape(w)}.*$\n?", "", text)
+    # remove stray backreference artifacts like \\1 or ASCII SOH
+    text = text.replace('\\1', '').replace('\x01', '')
+    text = re.sub(r'(?m)^\s*\\1', '', text)
     return re.sub(r"\n{2,}", "\n", text).strip()
+
+
+def quality_gate_text(text: str, enable: bool = True) -> str:
+    """Lightweight, safe post-processor for AI text before rendering.
+    - Removes meta/preambles
+    - Removes stray artifacts (e.g., \1)
+    - Softens overconfident claims
+    - Keeps structure but does NOT add any new facts
+    """
+    t = clean_ai_text(text)
+    # soften absolutes (JP/EN)
+    t = re.sub(r"(必ず|確実に|間違いなく|断言できる)", "可能性が高い", t)
+    t = re.sub(r"\b(guaranteed|certainly|definitely|undoubtedly)\b", "likely", t, flags=re.I)
+    # remove empty lines
+    t = re.sub(r"\n{2,}", "\n", t).strip()
+    return t
+
 
 def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: float, market_key: str) -> str:
     m = re.search(r"【今後3ヶ月[^】]*】\n?(.*)", text, flags=re.DOTALL)
@@ -964,6 +984,8 @@ button{
         st.write("")
         run_ai = st.button("✨ GENERATE AI INSIGHTS", type="primary", use_container_width=True)
         refresh_prices = st.button("🔄 RELOAD MARKET DATA", use_container_width=True)
+        qc_on = st.toggle("🛡️ AI output quality check", value=st.session_state.get("qc_on", True), help="Checks AI text for artifacts/overconfidence before showing. Does not add new facts.")
+        st.session_state.qc_on = qc_on
 
     # Reset sector selection when MARKET/WINDOW changes
     prev_market = st.session_state.last_market_key
@@ -1303,7 +1325,7 @@ button{
         "news": sec_news_str,
         "nonce": st.session_state.ai_nonce
     })
-    sec_ai_txt = clean_ai_text(enforce_da_dearu_soft(sec_ai_raw))
+    sec_ai_txt = quality_gate_text(enforce_da_dearu_soft(sec_ai_raw), enable=st.session_state.get('qc_on', True))
     sec_ai_html = parse_agent_debate(sec_ai_txt) if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt) else sec_ai_txt
     st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
     # Download Council Log (before leaderboard)
@@ -1425,18 +1447,23 @@ button{
     except Exception:
         overview = ""
     # --- Company Overview (always visible) ---
-    if overview:
-        st.markdown(f"<div class='note-box'><b>Company Overview</b><br>{overview}</div>", unsafe_allow_html=True)
-    # --- 1Y Relative Performance: Stock vs Sector ETF vs Benchmark ---
+    # --- Company Overview (always visible) ---
+    if not overview:
+        overview = "Sector:- | Industry:- | MCap:- | Summary:-"
+    st.markdown(f"<div class='note-box'><b>Company Overview</b><br>{overview}</div>", unsafe_allow_html=True)
+    # --- External chart links (1Y chart removed by design) ---
     try:
-        sec_etf = ""
-        try:
-            sel_sec = st.session_state.get("selected_sector")
-            if sel_sec:
-                sec_etf = MARKETS.get(market_key, {}).get("sectors", {}).get(sel_sec, "")
-        except Exception:
-            sec_etf = ""
-        plot_relative_1y(top["Ticker"], sec_etf, bench, market_key)
+        def _tv_symbol(tk: str) -> str:
+            # TradingView symbol mapping (best-effort)
+            if tk.endswith(".T"):
+                return "TSE:" + tk.replace(".T","")
+            if tk.startswith("^"):
+                # indices: use generic (may not resolve on TV)
+                return tk.replace("^","")
+            return tk
+        yf_url = f"https://finance.yahoo.com/quote/{top['Ticker']}"
+        tv_url = f"https://www.tradingview.com/symbols/{_tv_symbol(top['Ticker'])}/"
+        st.markdown(f"<div class='mini-note'>Charts: <a href='{yf_url}' target='_blank'>Yahoo Finance</a> | <a href='{tv_url}' target='_blank'>TradingView</a></div>", unsafe_allow_html=True)
     except Exception:
         pass
 
