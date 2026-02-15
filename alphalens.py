@@ -74,6 +74,39 @@ def pct(x, fmt="%.1f"):
     try: return (fmt % (float(x)*100)) + "%"
     except: return "-"
 
+
+def _norm_currency(cur: Optional[str]) -> str:
+    try:
+        if not cur:
+            return ""
+        c = str(cur).upper().strip()
+        return c if 1 <= len(c) <= 6 else ""
+    except Exception:
+        return ""
+
+def format_mcap(mcap: Any, currency: Optional[str] = None) -> str:
+    """Human-friendly market cap with currency prefix when available (e.g., 'USD 626.0B')."""
+    try:
+        if pd.isna(mcap):
+            return "-"
+        v = float(mcap)
+        if not (v > 0):
+            return "-"
+    except Exception:
+        return "-"
+
+    cur = _norm_currency(currency)
+    if v >= 1e12:
+        val = f"{v/1e12:.1f}T"
+    elif v >= 1e9:
+        val = f"{v/1e9:.1f}B"
+    elif v >= 1e6:
+        val = f"{v/1e6:.0f}M"
+    else:
+        val = f"{v:.0f}"
+
+    return f"{cur} {val}".strip() if cur else val
+
 def outlook_date_slots(days: List[int] = [7, 21, 35, 49, 63, 84]) -> List[str]:
     base = datetime.now().date()
     return [(base + timedelta(days=d)).strftime("%Y/%m/%d") for d in days]
@@ -122,16 +155,59 @@ def fetch_market_data(tickers: Tuple[str, ...], period: str) -> pd.DataFrame:
     return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
 def extract_close_prices(df: pd.DataFrame, expected: List[str]) -> pd.DataFrame:
-    if df.empty: return pd.DataFrame()
+    """Return a clean Close-price matrix with columns=tickers.
+
+    yfinance.download(..., group_by="ticker") usually returns a MultiIndex column:
+      (Field, Ticker) or (Ticker, Field). However, for a single ticker it may return a
+      single-level column DataFrame with fields (Open/High/Low/Close/...).
+
+    This helper supports both shapes and always returns a DataFrame of Close prices.
+    """
+    if df is None or getattr(df, "empty", True):
+        return pd.DataFrame()
+
     try:
+        close = None
+
         if isinstance(df.columns, pd.MultiIndex):
-            if "Close" in df.columns.get_level_values(0): close = df.xs("Close", axis=1, level=0)
-            elif "Close" in df.columns.get_level_values(1): close = df.xs("Close", axis=1, level=1)
-            else: return pd.DataFrame()
-        else: return pd.DataFrame()
+            # Prefer the "Close" level regardless of which axis level it sits on
+            if "Close" in df.columns.get_level_values(0):
+                close = df.xs("Close", axis=1, level=0)
+            elif "Close" in df.columns.get_level_values(1):
+                close = df.xs("Close", axis=1, level=1)
+            elif "Adj Close" in df.columns.get_level_values(0):
+                close = df.xs("Adj Close", axis=1, level=0)
+            elif "Adj Close" in df.columns.get_level_values(1):
+                close = df.xs("Adj Close", axis=1, level=1)
+            else:
+                return pd.DataFrame()
+        else:
+            # Single ticker case: columns are fields
+            if "Close" in df.columns:
+                s = df["Close"]
+            elif "Adj Close" in df.columns:
+                s = df["Adj Close"]
+            else:
+                return pd.DataFrame()
+
+            # Name the column as the (only) expected ticker if possible
+            col_name = expected[0] if expected and len(expected) == 1 else "Close"
+            close = s.to_frame(name=col_name)
+
+        # Coerce numeric and drop fully-empty rows
         close = close.apply(pd.to_numeric, errors="coerce").dropna(how="all")
-        return close[[c for c in expected if c in close.columns]]
-    except: return pd.DataFrame()
+
+        # If we expected specific tickers, filter in that order when possible
+        if expected:
+            cols = [c for c in expected if c in close.columns]
+            if cols:
+                close = close[cols]
+            elif close.shape[1] == 1 and len(expected) == 1:
+                # If the single column name doesn't match, rename it (best-effort)
+                close = close.rename(columns={close.columns[0]: expected[0]})
+        return close
+    except Exception:
+        return pd.DataFrame()
 
 def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     s_clean, b_clean = s.dropna(), b.dropna()
@@ -146,7 +222,8 @@ def calc_technical_metrics(s: pd.Series, b: pd.Series, win: int) -> Dict:
     half = max(1, win//2)
     p_half = (s_win.iloc[-1]/s_win.iloc[-half-1]-1)*100
     accel = p_half - (p_ret/2)
-    dd = abs(((s_win/s_win.cummax()-1)*100).min())
+    # MaxDD: max drawdown in the window (negative %, 0 is best)
+    dd = float(((s_win / s_win.cummax() - 1) * 100).min())
     year_high = s_clean.tail(252).max() if len(s_clean) >= 252 else s_clean.max()
     high_dist = (s_win.iloc[-1] / year_high - 1) * 100 if year_high > 0 else 0
     
@@ -207,6 +284,7 @@ def fetch_fundamentals_batch(tickers: List[str]) -> pd.DataFrame:
             if pbr is not None and pbr < 0: pbr = np.nan
             return {
                 "Ticker": t, "MCap": i.get("marketCap", 0),
+                "Currency": i.get("currency") or i.get("financialCurrency"),
                 "PER": pe, "PBR": pbr, "FwdPE": i.get("forwardPE", np.nan),
                 "ROE": i.get("returnOnEquity", np.nan),
                 "OpMargin": i.get("operatingMargins", np.nan),
@@ -411,7 +489,6 @@ def build_company_overview(profile: Dict[str, Any], enable_ai: bool, nonce: int 
         summary = "-"
 
     overview_html = f"Sector:{sector} | Industry:{industry} | MCap:{mcap_disp} | Country:{country}"
-    overview_plain = f"Name:{name}\nSector:{sector}\nIndustry:{industry}\nMCap:{mcap_disp}\nCountry:{country}\nWebsite:{website or '-'}\nSummary:{summary}"
     return {
         "name": name, "sector": sector, "industry": industry, "country": country,
         "website": website, "mcap": mcap, "mcap_disp": mcap_disp,
@@ -451,17 +528,21 @@ def quality_gate_text(text: str, enable: bool = True) -> str:
     """Lightweight, safe post-processor for AI text before rendering.
     - Removes meta/preambles
     - Removes stray artifacts (e.g., \1)
-    - Softens overconfident claims
+    - (Optional) Softens overconfident claims
     - Keeps structure but does NOT add any new facts
     """
     t = clean_ai_text(text)
+
+    # If QC is disabled, we still do basic cleanup (no opinionated edits).
+    if not enable:
+        return re.sub(r"\n{2,}", "\n", t).strip()
+
     # soften absolutes (JP/EN)
     t = re.sub(r"(必ず|確実に|間違いなく|断言できる)", "可能性が高い", t)
     t = re.sub(r"\b(guaranteed|certainly|definitely|undoubtedly)\b", "likely", t, flags=re.I)
     # remove empty lines
     t = re.sub(r"\n{2,}", "\n", t).strip()
     return t
-
 
 def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: float, market_key: str) -> str:
     m = re.search(r"【今後3ヶ月[^】]*】\n?(.*)", text, flags=re.DOTALL)
@@ -634,85 +715,145 @@ def market_to_html(text: str) -> str:
 
 @st.cache_data(ttl=1800)
 def get_news_consolidated(ticker: str, name: str, market_key: str, limit_each: int = 10) -> Tuple[List[dict], str, int, Dict[str,int]]:
-    news_items, context_lines = [], []
+    """Collect news from Yahoo + Google News RSS + a few public RSS feeds.
+
+    Speed: public RSS sources are fetched in parallel.
+    Output:
+      - news_items: list of {title, link, pub, src}
+      - context_str: up to 15 lines, newest first, in the form '- [SRC YYYY/MM/DD] Title'
+      - sentiment_score: lightweight headline sentiment (pos/neg keywords, recency weighted)
+      - meta: counts for source hits + pos/neg hits
+    """
     pos_words = ["増益", "最高値", "好感", "上昇", "自社株買い", "上方修正", "急騰", "beat", "high", "jump", "record"]
     neg_words = ["減益", "安値", "嫌気", "下落", "下方修正", "急落", "赤字", "miss", "low", "drop", "warn"]
-    sentiment_score = 0
-    meta = {"yahoo":0, "google":0, "pos":0, "neg":0}
 
-    # Yahoo
-    try:
-        raw = yf.Ticker(ticker).news or []
-        for n in raw[:limit_each]:
-            t, l, p = n.get("title",""), n.get("link",""), n.get("providerPublishTime",0)
-            news_items.append({"title":t, "link":l, "pub":p, "src":"Yahoo"})
-            if t:
-                meta["yahoo"] += 1
-                dt = datetime.fromtimestamp(p).strftime("%Y/%m/%d") if p else "-"
-                weight = 2 if (time.time() - p) < 172800 else 1
-                context_lines.append(f"- [Yahoo {dt}] {t}")
-                if any(w in t for w in pos_words): sentiment_score += 1*weight; meta["pos"] += 1
-                if any(w in t for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
-    except: pass
+    def _fetch_yahoo() -> List[dict]:
+        items: List[dict] = []
+        try:
+            raw = yf.Ticker(ticker).news or []
+            for n in raw[:limit_each]:
+                t = n.get("title", "") or ""
+                l = n.get("link", "") or ""
+                p = n.get("providerPublishTime", 0) or 0
+                items.append({"title": t, "link": l, "pub": int(p) if p else 0, "src": "Yahoo"})
+        except Exception:
+            pass
+        return items
 
-    # Google
-    try:
-        if "US" in market_key:
-            hl, gl, ceid = "en", "US", "US:en"
-            q = urllib.parse.quote(f"{name} stock")
-        else:
-            hl, gl, ceid = "ja", "JP", "JP:ja"
-            q = urllib.parse.quote(f"{name} 株")
-            
-        url = f"https://news.google.com/rss/search?q={q}&hl={hl}&gl={gl}&ceid={ceid}"
-        with urllib.request.urlopen(url, timeout=3) as r:
-            root = ET.fromstring(r.read())
+    def _fetch_google() -> List[dict]:
+        items: List[dict] = []
+        try:
+            if "US" in market_key:
+                hl, gl, ceid = "en", "US", "US:en"
+                q = urllib.parse.quote(f"{name} stock")
+            else:
+                hl, gl, ceid = "ja", "JP", "JP:ja"
+                q = urllib.parse.quote(f"{name} 株")
+
+            url = f"https://news.google.com/rss/search?q={q}&hl={hl}&gl={gl}&ceid={ceid}"
+            with urllib.request.urlopen(url, timeout=3) as r:
+                root = ET.fromstring(r.read())
             for i in root.findall(".//item")[:limit_each]:
-                t, l, d = i.findtext("title"), i.findtext("link"), i.findtext("pubDate")
-                try: pub = int(email.utils.parsedate_to_datetime(d).timestamp())
-                except: pub = 0
-                news_items.append({"title":t, "link":l, "pub":pub, "src":"Google"})
-                if t:
-                    meta["google"] += 1
-                    dt = datetime.fromtimestamp(pub).strftime("%Y/%m/%d") if pub else "-"
-                    weight = 2 if (time.time() - pub) < 172800 else 1
-                    context_lines.append(f"- [Google {dt}] {t}")
-                    if any(w in t for w in pos_words): sentiment_score += 1*weight; meta["pos"] += 1
-                    if any(w in t for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
-    except: pass
+                t = i.findtext("title") or ""
+                l = i.findtext("link") or ""
+                d = i.findtext("pubDate") or ""
+                try:
+                    pub = int(email.utils.parsedate_to_datetime(d).timestamp())
+                except Exception:
+                    pub = 0
+                items.append({"title": t, "link": l, "pub": pub, "src": "Google"})
+        except Exception:
+            pass
+        return items
 
-    # Free public RSS feeds (fallback / enrichment). English-only is OK.
-    try:
-        rss_sources = [
-            ("Reuters Markets", "https://feeds.reuters.com/reuters/marketsNews"),
-            ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
-            ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
-            ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
-            ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
-        ]
+    def _fetch_rss(src: str, url2: str, n: int) -> List[dict]:
+        items: List[dict] = []
+        try:
+            with urllib.request.urlopen(url2, timeout=3) as r:
+                root = ET.fromstring(r.read())
+            for it in root.findall(".//item")[:n]:
+                t2 = it.findtext("title") or ""
+                l2 = it.findtext("link") or ""
+                d2 = it.findtext("pubDate") or ""
+                try:
+                    pub2 = int(email.utils.parsedate_to_datetime(d2).timestamp())
+                except Exception:
+                    pub2 = 0
+                if not t2:
+                    continue
+                items.append({"title": t2, "link": l2, "pub": pub2, "src": src})
+        except Exception:
+            pass
+        return items
+
+    rss_sources = [
+        ("Reuters Markets", "https://feeds.reuters.com/reuters/marketsNews"),
+        ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
+        ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
+        ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+        ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
+    ]
+    rss_n = max(3, int(limit_each // 3))
+
+    all_items: List[dict] = []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = [ex.submit(_fetch_yahoo), ex.submit(_fetch_google)]
         for src, url2 in rss_sources:
+            futs.append(ex.submit(_fetch_rss, src, url2, rss_n))
+        for fu in futs:
             try:
-                with urllib.request.urlopen(url2, timeout=3) as r:
-                    root = ET.fromstring(r.read())
-                    for it in root.findall('.//item')[: max(3, limit_each//3) ]:
-                        t2, l2, d2 = it.findtext('title'), it.findtext('link'), it.findtext('pubDate')
-                        try: pub2 = int(email.utils.parsedate_to_datetime(d2).timestamp())
-                        except: pub2 = 0
-                        if not t2: continue
-                        news_items.append({"title": t2, "link": l2, "pub": pub2, "src": src})
-                        dt2 = datetime.fromtimestamp(pub2).strftime('%Y/%m/%d') if pub2 else "-"
-                        weight = 2 if (pub2 and (time.time() - pub2) < 172800) else 1
-                        context_lines.append(f"- [{src} {dt2}] {t2}")
-                        if any(w in t2 for w in pos_words): sentiment_score += 1*weight; meta["pos"] += 1
-                        if any(w in t2 for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
+                res = fu.result()
+                if res:
+                    all_items.extend(res)
             except Exception:
-                pass
-    except Exception:
-        pass
+                continue
 
+    # --- Dedup & sort ---
+    seen = set()
+    news_items: List[dict] = []
+    for it in all_items:
+        try:
+            key = (str(it.get("title", "")).strip(), str(it.get("src", "")).strip())
+            if not key[0]:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            news_items.append(it)
+        except Exception:
+            continue
 
-    news_items.sort(key=lambda x: x["pub"], reverse=True)
-    return news_items, "\n".join(context_lines[:15]), sentiment_score, meta
+    news_items.sort(key=lambda x: int(x.get("pub", 0) or 0), reverse=True)
+
+    # --- Build context + lightweight sentiment ---
+    sentiment_score = 0
+    meta: Dict[str, int] = {"yahoo": 0, "google": 0, "rss": 0, "pos": 0, "neg": 0}
+    context_lines: List[str] = []
+
+    now_ts = time.time()
+    for it in news_items[:15]:
+        title = str(it.get("title", "")).strip()
+        pub = int(it.get("pub", 0) or 0)
+        src = str(it.get("src", "")).strip() or "-"
+        dt = datetime.fromtimestamp(pub).strftime("%Y/%m/%d") if pub else "-"
+        context_lines.append(f"- [{src} {dt}] {title}")
+
+        if src == "Yahoo":
+            meta["yahoo"] += 1
+        elif src == "Google":
+            meta["google"] += 1
+        else:
+            meta["rss"] += 1
+
+        weight = 2 if (pub and (now_ts - pub) < 172800) else 1
+        if any(w in title for w in pos_words):
+            sentiment_score += 1 * weight
+            meta["pos"] += 1
+        if any(w in title for w in neg_words):
+            sentiment_score -= 1 * weight
+            meta["neg"] += 1
+
+    return news_items, "\n".join(context_lines), sentiment_score, meta
 
 def temporal_sanity_flags(text: str) -> List[str]:
     bad = ["年末年始", "クリスマス", "夏休み", "お盆", "来年", "昨年末"]
@@ -1229,6 +1370,34 @@ div[data-baseweb="select"] > div{
   border-radius: 14px !important;
 }
 div[data-baseweb="select"] span{ color: var(--text) !important; }
+
+/* Notes */
+.note-box{
+  background: #0a0a0a;
+  border: 1px solid #333;
+  border-left: 3px solid #00f2fe;
+  padding: 10px 12px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  font-size: var(--fz-note) !important;
+  line-height: 1.6;
+  color: #eee;
+  white-space: pre-wrap;
+}
+.mini-note{
+  font-size: var(--fz-note) !important;
+  color: #bbb;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+.mini-note a{
+  color: #00f2fe !important;
+  text-decoration: none;
+}
+.mini-note a:hover{
+  text-decoration: underline;
+}
+
 </style>
 """, unsafe_allow_html=True)
     
@@ -1350,6 +1519,10 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     else:
         sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
 
+    # Safe top/bottom sector names (avoid crash when sector data is missing)
+    top_sector = sdf.iloc[-1]["Sector"] if (isinstance(sdf, pd.DataFrame) and (not sdf.empty) and "Sector" in sdf.columns) else "-"
+    bot_sector = sdf.iloc[0]["Sector"] if (isinstance(sdf, pd.DataFrame) and (not sdf.empty) and "Sector" in sdf.columns) else "-"
+
     # --- Spread robustness: ensure defined in all paths ---
     try:
         spread = float(sdf['RS'].max() - sdf['RS'].min()) if (not sdf.empty and 'RS' in sdf.columns) else 0.0
@@ -1386,7 +1559,7 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     """ + market_to_html(force_nonempty_outlook_market(
         enforce_market_format(enforce_index_naming(generate_ai_content("market", {
             "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
-            "top": sdf.iloc[-1]["Sector"], "bot": sdf.iloc[0]["Sector"],
+            "top": top_sector, "bot": bot_sector,
             "market_name": m_cfg["name"], "headlines": market_context,
             "date_slots": outlook_date_slots(),
             "index_label": index_label,
@@ -1476,7 +1649,8 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     stock_list = m_cfg["stocks"].get(target_sector, [])
     if not stock_list: st.warning("No stocks."); return
 
-    full_list = [bench] + stock_list
+    sector_ticker = m_cfg.get("sectors", {}).get(target_sector)
+    full_list = list(dict.fromkeys([bench] + ([sector_ticker] if sector_ticker else []) + stock_list))
     cache_key = f"{market_key}_{target_sector}_{lookback_key}"
     
     if cache_key != st.session_state.get("sec_cache_key") or refresh_prices:
@@ -1489,9 +1663,26 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     s_audit = audit_data_availability(full_list, sec_df, win)
     
     results = []
-    for t in [x for x in s_audit["list"] if x != bench]:
+    # Pre-compute sector return for sector-relative strength (RS_Sec)
+    sector_ret = np.nan
+    try:
+        if sector_ticker and sector_ticker in sec_df.columns:
+            sec_series = sec_df[sector_ticker].dropna()
+            if len(sec_series) >= win + 1:
+                sec_win = sec_df[sector_ticker].ffill().tail(win+1)
+                if not sec_win.isna().iloc[0]:
+                    sector_ret = float((sec_win.iloc[-1] / sec_win.iloc[0] - 1) * 100)
+    except Exception:
+        sector_ret = np.nan
+
+    for t in [x for x in s_audit["list"] if x not in {bench, sector_ticker}]:
         stats = calc_technical_metrics(sec_df[t], sec_df[bench], win)
         if stats:
+            # RS_Sec: stock return minus sector return over the same window
+            try:
+                stats["RS_Sec"] = float(stats.get("Ret", np.nan) - sector_ret) if pd.notna(sector_ret) else np.nan
+            except Exception:
+                stats["RS_Sec"] = np.nan
             stats["Ticker"] = t
             stats["Name"] = get_name(t)
             results.append(stats)
@@ -1516,18 +1707,31 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     for _, r in top3.iterrows():
         f = pick_fund_row(cand_fund, r["Ticker"])
         cand_lines.append(
-            f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, RS {r['RS']:.2f}, Accel {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, "
-            f"MCap {sfloat(f.get('MCap',0))/1e9:.1f}B, PER {dash(f.get('PER'))}, PBR {dash(f.get('PBR'))}"
+            f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, RS(Mkt) {r['RS']:.2f}, "
+            f"RS(Sec) {dash(r.get('RS_Sec'), '%.2f')}, Accel {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, "
+            f"MCap {format_mcap(f.get('MCap',0), f.get('Currency'))}, PER {dash(f.get('PER'))}, PBR {dash(f.get('PBR'))}"
         )
     if not neg.empty:
         nr = neg.iloc[0]
         f = pick_fund_row(cand_fund, nr["Ticker"])
         cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {dash(f.get('PER'))}")
 
-    _, sec_news, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=3)
+    sec_items, sec_context, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=3)
     
     # Sector Stats
-    sector_stats = f"Universe:{len(stock_list)} Computable:{len(df)} MedianRS:{df['RS'].median():.2f} MedianRet:{df['Ret'].median():.1f}% SpreadRS:{(df['RS'].max()-df['RS'].min()):.2f}"
+    try:
+        med_rs_sec = df['RS_Sec'].median() if 'RS_Sec' in df.columns else np.nan
+    except Exception:
+        med_rs_sec = np.nan
+    sec_ret_disp = f"{sector_ret:+.1f}%" if pd.notna(sector_ret) else "-"
+    sector_stats = (
+        f"Universe:{len(stock_list)} Computable:{len(df)} "
+        f"MedianRS(Mkt):{df['RS'].median():.2f} "
+        + (f"MedianRS(Sec):{med_rs_sec:.2f} " if pd.notna(med_rs_sec) else "")
+        + f"MedianRet:{df['Ret'].median():.1f}% "
+        + f"SpreadRS(Mkt):{(df['RS'].max()-df['RS'].min()):.2f} "
+        + (f"Sector({sector_ticker})Ret:{sec_ret_disp}" if sector_ticker else "")
+    )
 
     # ---- stringify context for AI (never undefined) ----
     sector_stats_str = sector_stats
@@ -1564,15 +1768,17 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
                 continue
         return "\n".join(out)
 
-    sec_news_str = _news_to_str(sec_news, limit=6) if 'sec_news' in locals() else ""
+    # Use pre-formatted context lines from the consolidated news fetch (safe + includes source/date)
+    sec_news_str = (sec_context[:1500] if isinstance(sec_context, str) else _news_to_str(sec_items, limit=6))
     
     # 🦅 🤖 AI AGENT SECTOR REPORT (fast, top-pick focused)
     tp = df.iloc[0]
     tp_f = pick_fund_row(cand_fund, tp["Ticker"])
     top_line = (
-        f"[TOP] {tp['Name']} ({tp['Ticker']}): Ret {tp['Ret']:.1f}%, RS {tp['RS']:.2f}, Accel {tp['Accel']:.2f}, "
+        f"[TOP] {tp['Name']} ({tp['Ticker']}): Ret {tp['Ret']:.1f}%, RS(Mkt) {tp['RS']:.2f}, "
+        f"RS(Sec) {dash(tp.get('RS_Sec'), '%.2f')}, Accel {tp['Accel']:.2f}, "
         f"HighDist {tp['HighDist']:.1f}%, MaxDD {tp['MaxDD']:.1f}%, "
-        f"MCap {sfloat(tp_f.get('MCap',0))/1e9:.1f}B, PER {dash(tp_f.get('PER'))}, PBR {dash(tp_f.get('PBR'))}"
+        f"MCap {format_mcap(tp_f.get('MCap',0), tp_f.get('Currency'))}, PER {dash(tp_f.get('PER'))}, PBR {dash(tp_f.get('PBR'))}"
     )
 
     sec_ai_raw = generate_ai_content("sector_debate_fast", {
@@ -1601,7 +1807,7 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     if "Beta" not in ev_df.columns: ev_df["Beta"] = np.nan
     ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
     
-    cols = ['Name', 'Ticker', 'Apex', 'RS', 'Accel', 'Ret', '1M', '3M', 'HighDist', 'MaxDD', 'PER', 'PBR', 'ROE', 'RevGrow', 'OpMargin', 'Beta']
+    cols = ['Name', 'Ticker', 'Apex', 'RS', 'RS_Sec', 'Accel', 'Ret', '1M', '3M', 'HighDist', 'MaxDD', 'PER', 'PBR', 'ROE', 'RevGrow', 'OpMargin', 'Beta']
     cols = [c for c in cols if c in ev_df.columns]
     st.dataframe(ev_df[cols], hide_index=True, use_container_width=True)
 
@@ -1620,14 +1826,10 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
             if c in df.columns and f"{c}_rest" in df.columns:
                 df[c] = df[c].fillna(df[f"{c}_rest"])
         df = df.drop(columns=[c for c in df.columns if c.endswith("_rest")])
-
-    def fmt_mcap(x):
-        if pd.isna(x) or x == 0: return "-"
-        if x >= 1e12: return f"{x/1e12:.1f}T"
-        if x >= 1e9: return f"{x/1e9:.1f}B"
-        return f"{x/1e6:.0f}M"
+    def fmt_mcap_row(mcap, cur):
+        return format_mcap(mcap, cur)
     
-    df["MCapDisp"] = df["MCap"].apply(fmt_mcap)
+    df["MCapDisp"] = [format_mcap(m, c) for m, c in zip(df.get('MCap', [np.nan]*len(df)), df.get('Currency', [None]*len(df)))]
     
     df_disp = df.copy()
     for c in ["PER", "PBR"]: df_disp[c] = df_disp[c].apply(lambda x: dash(x))
@@ -1638,7 +1840,7 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     
     st.markdown("<div class='action-call'>👇 Select ONE stock to generate the AI agents' analysis note below</div>", unsafe_allow_html=True)
     event = st.dataframe(
-        df_sorted[["Name", "Ticker", "MCapDisp", "ROE", "RevGrow", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
+        df_sorted[["Name", "Ticker", "MCapDisp", "ROE", "RevGrow", "PER", "PBR", "Apex", "RS", "RS_Sec", "1M", "12M"]],
         column_config={
             "Ticker": st.column_config.TextColumn("Code"),
             "MCapDisp": st.column_config.TextColumn("Market Cap"),
@@ -1657,10 +1859,10 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     )
 
     st.caption(
-        "DEFINITIONS | Apex: zscore合成=weight_mom*z(RS)+(0.8-weight_mom)*z(Accel)+0.2*z(Ret) | "
-        "RS: Ret(銘柄)−Ret(市場平均) | Accel: 直近半期間リターン−(全期間リターン/2) | "
-        "HighDist: 直近価格の52週高値からの乖離(%) | MaxDD: 期間内最大ドローダウン(%) | "
-        "PER/PBR/ROE等: yfinance.Ticker().info（負のPER/PBRは除外、欠損は'-'）"
+        "DEFINITIONS | Apex: 0.45*z(3M)+0.35*z(1M)+0.15*z(RS)+0.05*z(Accel)（zscore合成） | "
+        "RS: Ret(銘柄)−Ret(市場平均) | RS_Sec: Ret(銘柄)−Ret(セクターETF) | Accel: 直近半期間リターン−(全期間リターン/2) | "
+        "HighDist: 直近価格の52週高値からの乖離(%) | MaxDD: 期間内最大ドローダウン(%)（負値。0に近いほど良い） | "
+        "MCap: 通貨付き（例 USD 626.0B） | PER/PBR/ROE等: yfinance.Ticker().info（負のPER/PBRは除外、欠損は'-'）"
     )
     st.caption(
         "SOURCE & NOTES | Price: yfinance.download(auto_adjust=True) | Fundamentals: yfinance.Ticker().info | "
@@ -1686,30 +1888,28 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     
     news_items, news_context, _, _ = get_news_consolidated(top["Ticker"], top["Name"], market_key, limit_each=10)
     fund_data = get_fundamental_data(top["Ticker"])
-    overview = ""
-    try:
-        bsum = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
-        if len(bsum) > 280:
-            bsum = bsum[:280].rstrip() + "…"
-        sec_name = str(fund_data.get("Sector") or "-")
-        ind_name = str(fund_data.get("Industry") or "-")
-        mcap = fund_data.get("MCap") or fund_data.get("MarketCap") or 0
-        mcap_disp = dash(mcap, "%.0f")
-        if isinstance(mcap, (int, float)) and mcap:
-            if mcap >= 1e12:
-                mcap_disp = f"{mcap/1e12:.1f}T"
-            elif mcap >= 1e9:
-                mcap_disp = f"{mcap/1e9:.1f}B"
-            elif mcap >= 1e6:
-                mcap_disp = f"{mcap/1e6:.0f}M"
-        overview = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Summary:{bsum}"
-    except Exception:
-        overview = ""
-    # --- Company Overview (always visible) ---
-    # --- Company Overview (always visible) ---
-    if not overview:
-        overview = "Sector:- | Industry:- | MCap:- | Summary:-"
-    st.markdown(f"<div class='note-box'><b>Company Overview</b><br>{overview}</div>", unsafe_allow_html=True)
+
+    # --- Company Overview (display vs AI context) ---
+    sec_name = str(fund_data.get("Sector") or "-")
+    ind_name = str(fund_data.get("Industry") or "-")
+    cur = fund_data.get("Currency")
+    mcap = fund_data.get("MCap") or fund_data.get("MarketCap") or np.nan
+    mcap_disp = format_mcap(mcap, cur)
+    website = fund_data.get("Website") or "-"
+
+    # Keep summary ONLY as hidden AI context (not shown as a duplicated UI block)
+    bsum = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
+    if len(bsum) > 280:
+        bsum = bsum[:280].rstrip() + "…"
+
+    overview_for_ai = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Summary:{bsum if bsum else '-'}"
+    overview_display = f"Sector: {sec_name} | Industry: {ind_name} | Market Cap: {mcap_disp}"
+
+    st.markdown(
+        f"<div class='note-box'><b>Company Overview</b><br>{overview_display}<br>Website: {website}</div>",
+        unsafe_allow_html=True
+    )
+
     # --- External chart links (1Y chart removed by design) ---
     try:
         def _tv_symbol(tk: str) -> str:
@@ -1723,20 +1923,6 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
         yf_url = f"https://finance.yahoo.com/quote/{top['Ticker']}"
         tv_url = f"https://www.tradingview.com/symbols/{_tv_symbol(top['Ticker'])}/"
         st.markdown(f"<div class='mini-note'>Charts: <a href='{yf_url}' target='_blank'>Yahoo Finance</a> | <a href='{tv_url}' target='_blank'>TradingView</a></div>", unsafe_allow_html=True)
-    except Exception:
-        pass
-
-    # --- Website (keep only the official site; avoid repeating Sector/Industry/MCap/Summary again) ---
-    try:
-        website_url = str(fund_data.get("Website") or "").strip()
-        if website_url:
-            if website_url.startswith("http"):
-                st.markdown(
-                    f"<div class='mini-note'>Website: <a href='{website_url}' target='_blank'>{website_url}</a></div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(f"<div class='mini-note'>Website: {website_url}</div>", unsafe_allow_html=True)
     except Exception:
         pass
 
@@ -1759,23 +1945,30 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     bench_per = dash(bench_fd.get("PER"))
     sector_per = dash(pd.to_numeric(df["PER"], errors="coerce").median())
     stock_per = dash(fund_data.get("PER"))
-    m_comp = f"市場平均PER: {bench_per}倍 / セクター中央値PER: {sector_per}倍 / 当該銘柄PER: {stock_per}倍"
+    rs_mkt = dash(top.get("RS"), "%.2f")
+    rs_sec = dash(top.get("RS_Sec"), "%.2f")
+    m_comp = f"市場平均PER: {bench_per}倍 / セクター中央値PER: {sector_per}倍 / 当該銘柄PER: {stock_per}倍 | RS(Mkt): {rs_mkt} | RS(Sec): {rs_sec}"
     
     fund_str = f"PER:{stock_per}, PBR:{dash(fund_data.get('PBR'))}, PEG:{dash(fund_data.get('PEG'))}, Target:{dash(fund_data.get('Target'))}"
 
     report_txt = generate_ai_content("stock_report", {
         "name": top["Name"], "ticker": top["Ticker"],
-        "overview": overview, "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
+        "overview": overview_for_ai, "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
         "earnings_date": ed, "price_action": price_act, "nonce": st.session_state.ai_nonce
     })
     report_txt = clean_ai_text(report_txt)
-    # Prepend Company Overview and Quantitative Summary (always) to the downloadable analyst note
-    # NOTE: Company Overview is already shown above (note-box). Avoid duplicating it again below Charts.
+
+    # Build downloadable analyst note (no duplicated Summary block in the header)
     analyst_note_txt = (
-        "Company Overview\n" + f"Name: {top['Name']} ({top['Ticker']})\nSector: {sec_name}\nIndustry: {ind_name}\nMarket Cap: {mcap_disp}\nWebsite: {fund_data.get('Website') or '-'}\nSummary: {bsum if bsum else '-'}" + "\n\n"
-        "Quantitative Summary\n" + fund_str + "\n\n"
+        "Company Overview\n"
+        + f"Name: {top['Name']} ({top['Ticker']})\n"
+        + f"Sector: {sec_name}\nIndustry: {ind_name}\nMarket Cap: {mcap_disp}\nWebsite: {website}\n\n"
+        + "Quantitative Summary\n"
+        + fund_str
+        + "\n\n"
         + report_txt
     )
+
     report_txt_disp = quality_gate_text(enforce_da_dearu_soft(report_txt), enable=st.session_state.get('qc_on', True))
     
     nc1, nc2 = st.columns([1.5, 1])
