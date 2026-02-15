@@ -39,7 +39,8 @@ def main():
     if not _gate():
         st.stop()
 
-    t1, t2 = st.tabs(["ALPHALENS", "COMING SOON"])
+    from next_gen_app_tab import render_next_gen_tab  # NEW
+    t1, t2 = st.tabs(["ALPHALENS", "NEXT GEN APP"])
     with t1:
         try:
             alphalens.run()
@@ -50,8 +51,10 @@ def main():
                 logs = st.session_state.get("system_logs", [])
                 st.text("\n".join(logs[-120:]) if logs else "(empty)")
     with t2:
-        st.markdown("<h1 style='font-family:Orbitron, sans-serif; color:#00f2fe;'>NEXT GEN APP</h1>", unsafe_allow_html=True)
-        st.caption("This module is under development. Stay tuned.")
-
+        try:
+            render_next_gen_tab(data_dir='data')
+        except Exception as e:
+            st.error('NEXT GEN APP failed to render. Details below.')
+            st.exception(e)
 if __name__ == "__main__":
     main()
