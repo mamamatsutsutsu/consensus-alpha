@@ -1,5 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
+
 import alphalens
 
 # ==========================================================
@@ -12,7 +13,6 @@ st.set_page_config(
     page_icon="🦅",
 )
 
-
 # ==========================================================
 # Global styling
 #   - Fixes white mobile background
@@ -20,6 +20,7 @@ st.set_page_config(
 #   - Higher-contrast, more legible inputs
 #   - Sidebar matches the theme
 # ==========================================================
+
 
 def _inject_global_css() -> None:
     st.markdown(
@@ -127,6 +128,17 @@ def _inject_global_css() -> None:
             box-shadow: 0 0 0 4px rgba(0,242,254,0.08);
         }
 
+        /* Disabled tab (JS will add .tab-disabled) */
+        div[data-testid="stTabs"] button[role="tab"].tab-disabled{
+            opacity: 0.42 !important;
+            filter: saturate(0.7) !important;
+            cursor: not-allowed !important;
+            pointer-events: none !important;
+            border: 1px dashed rgba(255,255,255,0.16) !important;
+            background: rgba(255,255,255,0.03) !important;
+            box-shadow: none !important;
+        }
+
         /* Inputs: higher contrast + more legible */
         div[data-testid="stTextInput"] input,
         div[data-testid="stTextArea"] textarea,
@@ -199,69 +211,68 @@ def _inject_global_css() -> None:
             font-weight: 800 !important;
         }
 
-        /* Sidebar: match the glassy dark theme (even if collapsed) */
+        /* Sidebar */
         section[data-testid="stSidebar"]{
-            background:
-                radial-gradient(700px 420px at 20% 10%, rgba(0,242,254,0.10), transparent 60%),
-                linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
             border-right: 1px solid rgba(255,255,255,0.10);
-            backdrop-filter: blur(14px);
-        }
-        section[data-testid="stSidebar"] > div{ background: transparent; }
-        section[data-testid="stSidebar"] .stMarkdown,
-        section[data-testid="stSidebar"] label,
-        section[data-testid="stSidebar"] p{
-            color: rgba(255,255,255,0.86) !important;
+            background: rgba(255,255,255,0.03);
+            backdrop-filter: blur(12px);
         }
 
-        /* Alerts: keep them tight and on-brand */
-        div[data-testid="stAlert"]{
-            border-radius: 14px;
-            border: 1px solid rgba(255,255,255,0.12);
-        }
-
-        /* Dev placeholder card */
-        .dev-card{
-            width: min(900px, 100%);
-            margin: 1.2rem auto;
-            padding: 1.35rem 1.45rem;
-            border-radius: 24px;
-            border: 1px solid rgba(255,255,255,0.14);
-            background:
-                radial-gradient(900px 420px at 12% 10%, rgba(0,242,254,0.10), transparent 60%),
-                radial-gradient(800px 420px at 86% 12%, rgba(79,172,254,0.08), transparent 60%),
-                linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
-            backdrop-filter: blur(14px);
-        }
-        .dev-pill{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            border-radius: 999px;
-            border: 1px solid rgba(0,242,254,0.22);
-            background: rgba(0,242,254,0.08);
-            color: rgba(255,255,255,0.86);
-            font-size: 12px;
-            letter-spacing: 0.04em;
-        }
-        .dev-title{
-            margin-top: 14px;
-            font-family: Orbitron, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            font-size: 22px;
-            letter-spacing: 0.06em;
-            color: rgba(255,255,255,0.94);
-        }
-        .dev-sub{
-            margin-top: 8px;
-            color: rgba(255,255,255,0.70);
-            font-size: 14px;
-            line-height: 1.65;
-        }
-
-        /* Small polish */
         a{ color: rgba(0,242,254,0.85); }
         hr{ border-color: rgba(255,255,255,0.10); }
+
+        /* WIP panel */
+        .wip-card{
+            margin-top: 22px;
+            border-radius: 22px;
+            border: 1px solid rgba(255,255,255,0.14);
+            background:
+                radial-gradient(700px 360px at 12% 18%, rgba(0,242,254,0.10), transparent 58%),
+                radial-gradient(680px 360px at 88% 22%, rgba(79,172,254,0.08), transparent 58%),
+                linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+            box-shadow: 0 18px 62px rgba(0,0,0,0.48);
+            padding: 22px 20px;
+            backdrop-filter: blur(12px);
+        }
+        .wip-kicker{
+            font-size: 11px;
+            letter-spacing: 0.22em;
+            color: rgba(255,255,255,0.62);
+            text-transform: uppercase;
+        }
+        .wip-title{
+            margin-top: 10px;
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: rgba(255,255,255,0.94);
+        }
+        .wip-title .accent{
+            background: linear-gradient(135deg, rgba(0,242,254,1), rgba(79,172,254,1));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .wip-sub{
+            margin-top: 8px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: rgba(255,255,255,0.74);
+        }
+        .wip-meta{
+            margin-top: 14px;
+            display:flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            color: rgba(255,255,255,0.55);
+            font-size: 12px;
+        }
+        .wip-meta span{
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.04);
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -270,11 +281,57 @@ def _inject_global_css() -> None:
 
 _inject_global_css()
 
+# ==========================================================
+# Passcode gate
+# ==========================================================
+
+
+def _inject_gate_autofocus_js() -> None:
+    """Best-effort autofocus for the passcode field.
+
+    Note: some mobile browsers (notably iOS Safari) restrict auto-focus behavior.
+    """
+    components.html(
+        """
+        <script>
+        (function(){
+          const focusGate = () => {
+            const form = parent.document.querySelector('div[data-testid="stForm"]');
+            if (!form) return false;
+
+            // Prefer the password input inside the gate form
+            const input = form.querySelector('input[type="password"]');
+            if (!input) return false;
+
+            // Avoid fighting the user if they already focused something
+            const active = parent.document.activeElement;
+            if (active && active.tagName && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
+              return true;
+            }
+
+            try { input.focus({ preventScroll: true }); } catch (e) { try { input.focus(); } catch (e2) {} }
+            return true;
+          };
+
+          if (focusGate()) return;
+
+          const obs = new MutationObserver(() => { if (focusGate()) obs.disconnect(); });
+          obs.observe(parent.document.body, { childList: true, subtree: true });
+
+          // Safety: stop observing after a short window
+          setTimeout(() => { try { obs.disconnect(); } catch (e) {} }, 4000);
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
 
 def _gate() -> bool:
-    """Password gate. Enable by setting APP_PASSWORD in Streamlit Secrets."""
+    """Optional password gate: set APP_PASSWORD in Streamlit Secrets to enable."""
 
-    # Optional password gate: set APP_PASSWORD in Streamlit Secrets to enable.
+    pw = None
     try:
         pw = st.secrets.get("APP_PASSWORD")
     except Exception:
@@ -282,11 +339,10 @@ def _gate() -> bool:
 
     if not pw:
         return True
-
     if st.session_state.get("auth_ok"):
         return True
 
-    # Gate-only layout (center card; looks good on mobile; no white background)
+    # Gate-only layout: centered glass card (works well on mobile)
     st.markdown(
         """
         <style>
@@ -315,16 +371,14 @@ def _gate() -> bool:
                 radial-gradient(800px 400px at 10% 10%, rgba(0,242,254,0.12), transparent 55%),
                 radial-gradient(700px 420px at 85% 15%, rgba(79,172,254,0.10), transparent 55%),
                 linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
-            box-shadow:
-                0 18px 60px rgba(0,0,0,0.55),
-                inset 0 1px 0 rgba(255,255,255,0.08);
-            backdrop-filter: blur(16px);
-            padding: 26px 22px;
+            box-shadow: 0 22px 70px rgba(0,0,0,0.55);
+            backdrop-filter: blur(14px);
         }
+        div[data-testid="stForm"] > form{ padding: 26px 22px 18px 22px; }
 
         .gate-brand{
             font-family: Orbitron, Inter, sans-serif;
-            font-size: 26px;
+            font-size: 22px;
             letter-spacing: 0.14em;
             line-height: 1.15;
             color: rgba(255,255,255,0.92);
@@ -349,6 +403,12 @@ def _gate() -> bool:
             color: rgba(255,255,255,0.55);
             font-size: 12px;
         }
+        .gate-meta span{
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.04);
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -360,11 +420,11 @@ def _gate() -> bool:
             unsafe_allow_html=True,
         )
         st.markdown(
-            '<div class="gate-sub">Enter passcode to continue.</div>',
+            '<div class="gate-sub">Enter the passcode to continue.</div>',
             unsafe_allow_html=True,
         )
 
-        entered = st.text_input(
+        x = st.text_input(
             "Passcode",
             type="password",
             key="gate_pw",
@@ -375,66 +435,116 @@ def _gate() -> bool:
         unlock = st.form_submit_button("Unlock", type="primary", use_container_width=True)
 
         st.markdown(
-            '<div class="gate-meta"><span>Private preview</span><span>secure access</span></div>',
+            '<div class="gate-meta"><span>Private preview</span><span>Secure access</span></div>',
             unsafe_allow_html=True,
         )
 
-    # Autofocus cursor on the passcode field (best-effort; some mobile browsers may restrict it)
-    components.html(
-        """
-        <script>
-        (function(){
-          const tryFocus = () => {
-            let doc;
-            try { doc = window.parent.document; } catch(e) { return false; }
-            const selectors = [
-              'input[type="password"][placeholder="Passcode"]',
-              'div[data-testid="stTextInput"] input[placeholder="Passcode"]',
-              'input[type="password"]',
-              'div[data-testid="stTextInput"] input'
-            ];
-            for (const sel of selectors){
-              const el = doc.querySelector(sel);
-              if (el && !el.disabled && el.offsetParent !== null){
-                try{ el.focus({preventScroll:true}); }catch(e){ el.focus(); }
-                try{ el.setSelectionRange(el.value.length, el.value.length); }catch(e){}
-                return true;
-              }
-            }
-            return false;
-          };
-          setTimeout(tryFocus, 60);
-          setTimeout(tryFocus, 180);
-          setTimeout(tryFocus, 420);
-          setTimeout(tryFocus, 900);
-        })();
-        </script>
-        """,
-        height=0,
-    )
+    # Autofocus after render (best-effort)
+    _inject_gate_autofocus_js()
 
     if unlock:
-        if entered == pw:
+        if x == pw:
             st.session_state.auth_ok = True
             st.toast("Unlocked", icon="✅")
             st.rerun()
         else:
+            st.session_state["gate_pw"] = ""
             st.error("Incorrect passcode.")
 
     return False
+
+
+# ==========================================================
+# Tabs helpers
+# ==========================================================
+
+
+def _inject_disable_tab_js(match_prefix: str) -> None:
+    """Disable (non-clickable) a tab whose label starts with match_prefix.
+
+    This is purely a UI lock. The tab content should still be safe / placeholder on the Python side.
+    """
+    components.html(
+        f"""
+        <script>
+        (function() {{
+          const MATCH = {match_prefix!r};
+
+          const disable = () => {{
+            const buttons = Array.from(parent.document.querySelectorAll('div[data-testid="stTabs"] button[role="tab"]'));
+            if (!buttons || buttons.length === 0) return false;
+
+            const target = buttons.find(b => (b.innerText || '').trim().startsWith(MATCH));
+            if (!target) return false;
+
+            // If the disabled tab is currently selected, move away to the first tab.
+            try {{
+              if (target.getAttribute('aria-selected') === 'true') {{
+                const first = buttons[0];
+                if (first && first !== target) first.click();
+              }}
+            }} catch (e) {{}}
+
+            // Mark disabled
+            try {{
+              target.classList.add('tab-disabled');
+              target.setAttribute('aria-disabled', 'true');
+              target.setAttribute('disabled', 'true');
+              target.tabIndex = -1;
+              target.title = 'Under development';
+              target.style.pointerEvents = 'none';
+            }} catch (e) {{}}
+
+            return true;
+          }};
+
+          if (disable()) return;
+
+          const obs = new MutationObserver(() => {{ if (disable()) obs.disconnect(); }});
+          obs.observe(parent.document.body, {{ childList: true, subtree: true }});
+          setTimeout(() => {{ try {{ obs.disconnect(); }} catch (e) {{}} }}, 5000);
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+def _wip_panel(product_name: str) -> None:
+    st.markdown(
+        f"""
+        <div class="wip-card">
+          <div class="wip-kicker">Under development</div>
+          <div class="wip-title">{product_name} <span class="accent">WIP</span></div>
+          <div class="wip-sub">
+            This section is currently locked while we build and polish the experience.
+          </div>
+          <div class="wip-meta">
+            <span>Coming soon</span>
+            <span>Design in progress</span>
+            <span>Private build</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ==========================================================
+# App entry
+# ==========================================================
 
 
 def main() -> None:
     if not _gate():
         st.stop()
 
-    # NEXT GEN APP — import after set_page_config & gate
-    from next_gen_app_tab import render_next_gen_tab
-
     # UI SAFETY: keep top tabs reachable on mobile browsers (safe-area / browser chrome overlap)
     st.markdown(
         """
         <style>
+        :root{ --safe-top: env(safe-area-inset-top, 0px); }
         /* Enforce comfortable top padding so st.tabs doesn't get hidden under toolbars */
         div[data-testid="stAppViewContainer"] .block-container{
             padding-top: calc(5.0rem + var(--safe-top)) !important;
@@ -449,7 +559,11 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    t1, t2, t3 = st.tabs(["ALPHALENS", "THEMELENS", "WIP"])
+    # Tabs (kept as-is style/placement; only labels + lock applied)
+    t1, t2, t3 = st.tabs(["ALPHALENS", "THEMELENS · WIP", "LAB · WIP"])
+
+    # Lock THEMELENS tab UI (non-clickable)
+    _inject_disable_tab_js("THEMELENS")
 
     with t1:
         try:
@@ -462,23 +576,11 @@ def main() -> None:
                 st.text("\n".join(logs[-120:]) if logs else "(empty)")
 
     with t2:
-        try:
-            render_next_gen_tab(data_dir="data")
-        except Exception as e:
-            st.error("NEXT GEN APP error. Details below.")
-            st.exception(e)
+        # Locked / placeholder (do not import or run the real app here while WIP)
+        _wip_panel("THEMELENS")
 
     with t3:
-        st.markdown(
-            """
-            <div class="dev-card">
-              <div class="dev-pill">🚧  WORK IN PROGRESS</div>
-              <div class="dev-title">Under development</div>
-              <div class="dev-sub">This tab is reserved for future releases and experiments.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        _wip_panel("LAB")
 
 
 if __name__ == "__main__":
