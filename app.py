@@ -60,7 +60,7 @@ def main():
         """ ,
         unsafe_allow_html=True,
     )
-    t1, t2 = st.tabs(["ALPHALENS", "NEXT GEN APP"])
+    t1, t2 = st.tabs(["ALPHALENS", "THEMELENS"])
     with t1:
         try:
             alphalens.run()
