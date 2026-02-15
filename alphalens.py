@@ -315,41 +315,32 @@ def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: flo
     return text
 
 def enforce_market_format(text: str) -> str:
-    # Basic required headers
+    """Normalize Market Pulse text to required sections; resilient to messy LLM outputs."""
+    if not isinstance(text, str):
+        text = str(text)
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    # Remove common assistant boilerplate/meta
+    text = re.sub(r"(?im)^\s*(はい、)?\s*承知(いた)?しました[。!！]*.*\n+", "", text)
+    text = re.sub(r"(?im)^\s*以下に.*(作成|生成).*(します|いたします)[。!！]*\s*$", "", text)
+
+    # Remove unwanted date suffix right after the outlook header
+    text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\(\d{4}[-/]\d{2}[-/]\d{2}\)", r"\1", text)
+    text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\d{4}[-/]\d{2}[-/]\d{2}", r"\1", text)
+
+    # Ensure required headers exist
     if "【市場概況】" not in text:
-        text = "【市場概況】
-" + text.strip()
+        text = "【市場概況】\n" + text
+
     if "【主な変動要因】" not in text:
-        text += "
-【主な変動要因】
-(+) 上昇要因:
-(-) 下落要因:"
+        text += "\n\n【主な変動要因】\n(+) 上昇要因:\n(-) 下落要因:"
+
     if "【今後3ヶ月" not in text:
-        text += "
-【今後3ヶ月のコンセンサス見通し】
-"
+        text += "\n\n【今後3ヶ月のコンセンサス見通し】\n"
 
-    # Remove extra blank lines between headers
-    text = re.sub(r"
-\s*
-(【)", r"
-\1", text)
-    # Remove unnecessary date suffix after outlook header (e.g., "【今後3ヶ月...】2026-02-22")
-    text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\(?\d{4}-\d{2}-\d{2}\)?", r"\1", text)
+    return text
 
-    # Normalize EventA/B/C... placeholders into readable names if present
-    event_map = {
-        "イベントA": "米インフレ指標",
-        "イベントB": "地政学リスク",
-        "イベントC": "主要企業決算",
-        "イベントD": "FOMC/金融政策",
-        "イベントE": "原油・OPEC動向",
-        "イベントF": "長期金利動向",
-    }
-    for k,v in event_map.items():
-        text = text.replace(k, v)
-
-    return text.strip()
 def enforce_index_naming(text: str, index_label: str) -> str:
     if not index_label:
         return text
