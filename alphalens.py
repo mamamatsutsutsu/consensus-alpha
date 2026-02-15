@@ -326,6 +326,32 @@ def enforce_market_format(text: str) -> str:
     text = re.sub(r"(?im)^\s*以下に.*(作成|生成).*(します|いたします)[。!！]*\s*$", "", text)
 
     # Remove unwanted date suffix right after the outlook header
+
+    # Replace placeholder event names (EventA/B/C...) with meaningful labels (best-effort)
+    def _event_label(reason: str) -> str:
+        r = reason
+        if re.search(r"(CPI|インフレ|物価|PCE)", r, re.I): return "Inflation data"
+        if re.search(r"(雇用|Payroll|失業|NFP)", r, re.I): return "Jobs data"
+        if re.search(r"(FOMC|FRB|Fed|利上げ|利下げ|金融政策)", r, re.I): return "Central bank"
+        if re.search(r"(決算|earnings)", r, re.I): return "Earnings"
+        if re.search(r"(地政学|中東|台湾|ウクライナ|紛争)", r, re.I): return "Geopolitics"
+        if re.search(r"(金利|長期金利|利回り|bond)", r, re.I): return "Rates"
+        if re.search(r"(原油|OPEC)", r, re.I): return "Oil supply"
+        return "Macro catalyst"
+
+    def _rename_event_lines(t: str) -> str:
+        # Pattern: - イベントA(2026-03-01)→...→理由
+        out_lines = []
+        for ln in t.splitlines():
+            m = re.match(r"^\s*-\s*(イベント|Event)\s*([A-F])\s*\(([^)]+)\)\s*→\s*(.*)$", ln)
+            if m:
+                date = m.group(3)
+                rest = m.group(4)
+                label = _event_label(rest)
+                ln = f"- {label} ({date})→{rest}"
+            out_lines.append(ln)
+        return "\n".join(out_lines)
+
     text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\(\d{4}[-/]\d{2}[-/]\d{2}\)", r"\1", text)
     text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\d{4}[-/]\d{2}[-/]\d{2}", r"\1", text)
 
@@ -338,6 +364,8 @@ def enforce_market_format(text: str) -> str:
 
     if "【今後3ヶ月" not in text:
         text += "\n\n【今後3ヶ月のコンセンサス見通し】\n"
+
+    text = _rename_event_lines(text)
 
     return text
 
@@ -373,8 +401,8 @@ def group_plus_minus_blocks(text: str) -> str:
         cleaned.append(l)
 
     pos, neg, oth = [], [], []
-    pos_kw = ["上方修正","増益","好調","回復","低下","鈍化","利下げ","買い","資金流入","強い","上昇","改善","割安","自社株買い","需要増","受注増"]
-    neg_kw = ["下方修正","減益","悪化","失速","再加速","利上げ","引き締め","売り","資金流出","下落","警戒","高止まり","リスク","地政学","長期金利上昇","ボラティリティ","懸念"]
+    pos_kw = ["上方修正","増益","好調","回復","低下","鈍化","利下げ","利回り低下","金利低下","緩和","買い","資金流入","強い","上昇","改善","割安","自社株買い","需要増","受注増","インフレ低下","ソフトインフレ","景気後退懸念後退"]
+    neg_kw = ["下方修正","減益","悪化","失速","再加速","利上げ","引き締め","タカ派","売り","資金流出","下落","警戒","高止まり","リスク","地政学","長期金利上昇","金利上昇","利回り上昇","ボラティリティ","懸念","警告シグナル","テック売り","リプライシング"]
 
     for l in cleaned:
         raw = l.lstrip("-・ ").strip()
@@ -904,68 +932,57 @@ button{
         return
 
     audit = audit_data_availability(core_tickers, core_df, win)
-
-    # --- BENCHMARK SAFE HANDLING ---
-    # yfinance occasionally fails to return a benchmark column (or returns all-NaN).
-    # For a commercial app we must *never* crash; instead:
-    # 1) use requested benchmark if available,
-    # 2) else use a sector-average proxy (from available sector ETFs),
-    # 3) else fall back to the first available series with enough history.
     bench_used = bench
-    bench_ser = None
-
-    try:
-        if bench in core_df.columns and core_df[bench].dropna().shape[0] >= win + 1:
-            bench_ser = core_df[bench]
+    # --- Benchmark robustness: best-effort alignment even when yfinance misses ---
+    if bench not in audit.get("list", []):
+        # Market-aware proxy candidates (avoid wrong-region proxies)
+        proxy_by_market = {
+            "US": ["^GSPC", "SPY", "VOO", "IVV"],
+            "JP": ["^TOPX", "1306.T", "1321.T", "^N225"],
+        }
+        # Also allow bench-specific fallbacks
+        proxy_by_bench = {
+            "SPY": ["^GSPC", "VOO", "IVV"],
+            "QQQ": ["^NDX", "^IXIC"],
+            "1306.T": ["^TOPX", "1321.T", "^N225"],
+        }
+        mk = "JP" if str(market_key).endswith("JP") or "JP" in str(market_key) else "US"
+        proxies = []
+        proxies += proxy_by_bench.get(bench, [])
+        proxies += proxy_by_market.get(mk, [])
+        # Try already-fetched columns first
+        for p in proxies:
+            if p in core_df.columns and core_df[p].dropna().shape[0] >= win + 1:
+                bench_used = p
+                st.warning(f"BENCHMARK MISSING: using proxy {bench_used}. requested={bench} (best-effort; Market Pulse may be slightly degraded)")
+                break
         else:
-            # Sector-average proxy (preferred: stable + market-representative)
-            sector_cols = [t for t in m_cfg["sectors"].values() if t in core_df.columns and core_df[t].dropna().shape[0] >= win + 1]
-            if len(sector_cols) >= 2:
-                bench_ser = core_df[sector_cols].mean(axis=1)
-                bench_used = f"{bench} (proxy: sector avg)"
-                st.info(f"BENCHMARK MISSING: using proxy (sector avg). requested={bench}")
+            # Last resort: pick any available series with sufficient history
+            candidates = [c for c in core_df.columns if core_df[c].dropna().shape[0] >= win + 1]
+            if candidates:
+                bench_used = candidates[0]
+                st.warning(f"BENCHMARK MISSING: using available series {bench_used}. requested={bench} (best-effort; Market Pulse may be degraded)")
             else:
-                # Any available series with enough history
-                avail_cols = [c for c in core_df.columns if core_df[c].dropna().shape[0] >= win + 1]
-                if avail_cols:
-                    bench_ser = core_df[avail_cols[0]]
-                    bench_used = f"{bench} (proxy: {avail_cols[0]})"
-                    st.info(f"BENCHMARK MISSING: using proxy {avail_cols[0]}. requested={bench}")
-                else:
-                    st.warning("BENCHMARK MISSING: no valid series available (market pulse degraded)")
-                    bench_ser = core_df.iloc[:, 0]
+                st.error("BENCHMARK MISSING: no usable series for the selected window.")
+                return
 
-    except Exception:
-        # Absolute last resort: pick first column to avoid crashing
-        st.warning("BENCHMARK ERROR: continuing with fallback series (market pulse degraded)")
-        bench_ser = core_df.iloc[:, 0]
 
     # 1. Market Pulse
-    b_stats = calc_technical_metrics(bench_ser, bench_ser, win)
-    if not b_stats:
-        st.error("BENCH ERROR")
-        return
+    b_stats = calc_technical_metrics(core_df[bench_used], core_df[bench_used], win)
+    if not b_stats: st.error("BENCH ERROR"); return
 
-    regime, weight_mom = calculate_regime(bench_ser.dropna())
+    regime, weight_mom = calculate_regime(core_df[bench_used].dropna())
+    
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
         if s_t in audit["list"]:
-            res = calc_technical_metrics(core_df[s_t], bench_ser, win)
+            res = calc_technical_metrics(core_df[s_t], core_df[bench_used], win)
             if res:
                 res["Sector"] = s_n
                 sec_rows.append(res)
     
     if not sec_rows: st.warning("SECTOR DATA INSUFFICIENT"); return
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
-
-    # Spread (pt): sector RS max - min. Robustly default to 0.0 to avoid crashes.
-    try:
-        rs_num = pd.to_numeric(sdf.get("RS"), errors="coerce")
-        spread = float(rs_num.max() - rs_num.min())
-        if not np.isfinite(spread):
-            spread = 0.0
-    except Exception:
-        spread = 0.0
     
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
@@ -1085,7 +1102,8 @@ button{
     if not results: st.warning("NO DATA."); return
     df = pd.DataFrame(results)
     
-    df["Apex"] = weight_mom * calculate_zscore(df["RS"]) + (0.8 - weight_mom) * calculate_zscore(df["Accel"]) + 0.2 * calculate_zscore(df["Ret"])
+        # TopPickScore (momentum/news-centric): 3M & 1M dominate
+    df["Apex"] = 0.45 * calculate_zscore(df["3M"]) + 0.35 * calculate_zscore(df["1M"]) + 0.15 * calculate_zscore(df["RS"]) + 0.05 * calculate_zscore(df["Accel"])
     df = df.sort_values("Apex", ascending=False)
     
     # 4. Top pick selection (fast)
@@ -1109,7 +1127,7 @@ button{
         f = pick_fund_row(cand_fund, nr["Ticker"])
         cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {dash(f.get('PER'))}")
 
-    _, sec_news, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=6)
+    _, sec_news, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=3)
     
     # Sector Stats
     sector_stats = f"Universe:{len(stock_list)} Computable:{len(df)} MedianRS:{df['RS'].median():.2f} MedianRet:{df['Ret'].median():.1f}% SpreadRS:{(df['RS'].max()-df['RS'].min()):.2f}"
