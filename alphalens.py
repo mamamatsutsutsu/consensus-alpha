@@ -632,7 +632,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         [SENTIMENT] 形式厳守：Sector view→Stock pick（ニュース根拠2本以上。数値と因果）
         [VALUATION] 形式厳守：Sector view→Stock pick（PER/PBR等が使える場合のみ。使えない場合は触れない）
         [SKEPTIC] 形式厳守：Sector view→Stock pick（反対意見。何が外れるとダメか）
-        [RISK] リスクとトリガー（箇条書き3つ。上昇シナリオを壊す要因）
+        [RISK] 形式厳守：最初に「Sector view: ...」(1〜2文)→次に「Stock pick: <TICKER> ...」(2〜4文)→最後にトリガー箇条書き3つ（上昇シナリオを壊す要因）
         [JUDGE] タイトルは本文で「TOP PICK JUDGE」と明記。形式厳守：Sector view→Stock pick（トップピック1銘柄のみ、ティッカー必須）→なぜ他候補ではないか（2点）→次に見るべき指標1つ
 """
     elif prompt_key == "sector_debate":
@@ -796,6 +796,9 @@ def parse_agent_debate(text: str) -> str:
         "[SKEPTIC]": ("agent-skeptic", "SKEPTIC"),
         "[RISK]": ("agent-risk", "RISK"),
         "[JUDGE]": ("agent-verdict", "TOP PICK JUDGE"),
+        "[TOP_PICK_JUDGE]": ("agent-verdict", "TOP PICK JUDGE"),
+        "[TOPPICK_JUDGE]": ("agent-verdict", "TOP PICK JUDGE"),
+        "[TOP_PICK]": ("agent-verdict", "TOP PICK JUDGE"),
     }
     clean = clean_ai_text(text.replace("```html", "").replace("```", ""))
     parts = re.split(r'(\[[A-Z_]+\])', clean)
@@ -817,6 +820,9 @@ def parse_agent_debate(text: str) -> str:
     order = [
         "[SECTOR_OUTLOOK]",
         "[JUDGE]",
+        "[TOP_PICK_JUDGE]",
+        "[TOPPICK_JUDGE]",
+        "[TOP_PICK]",
         "[FUNDAMENTAL]",
         "[SENTIMENT]",
         "[VALUATION]",
@@ -836,9 +842,12 @@ def parse_agent_debate(text: str) -> str:
             content = content.strip()
         # compact: remove excessive blank lines
         content = re.sub(r"\n{3,}", "\n\n", content)
+        # remove stray backreference artifacts (\\1) and SOH that sometimes leak from regex replacement
+        content = re.sub(r"(?m)^\s*(?:\\\\1|\x01)\s*", "", content)
+        content = content.replace("\\1", "").replace("\x01", "")
         # emphasize required sub-structure if present
-        content = re.sub(r"(?m)^(Sector view:\\s*)", r"<span class=\'subhead\'>\1</span>", content)
-        content = re.sub(r"(?m)^(Stock pick:\\s*)", r"<span class=\'subhead\'>\1</span>", content)
+        content = re.sub(r"(?m)^(Sector view:\s*)", r"<span class=\'subhead\'>\1</span>", content)
+        content = re.sub(r"(?m)^(Stock pick:\s*)", r"<span class=\'subhead\'>\1</span>", content)
         content_html = "<div class='agent-content'>" + content.replace("\n", "<br>") + "</div>"
 
         if tag == "[SECTOR_OUTLOOK]":
@@ -1515,7 +1524,8 @@ button{
     if not overview_plain:
         overview_plain = "Sector:- | Industry:- | MCap:- | Summary:-"
     # --- Company Overview (always shown above the report as well) ---
-    st.markdown("**Company Overview**  \n" + overview_plain)
+    overview_html = f"<div class=\"note-box\" style=\"margin:8px 0 10px 0;\"><b>Company Overview</b><br>{overview_plain}</div>"
+    st.markdown(overview_html, unsafe_allow_html=True)
     analyst_note_txt = (
         "Company Overview\n" + overview_plain + "\n\n"
         "Quantitative Summary\n" + fund_str + "\n\n"
@@ -1525,7 +1535,7 @@ button{
     
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_txt_disp}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{overview_plain}<br><br>{report_txt_disp}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
