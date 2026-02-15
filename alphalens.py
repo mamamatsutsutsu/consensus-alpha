@@ -919,16 +919,31 @@ button{
     # Spread & NewsSent (SAFE)
     spread = float(sdf["RS"].max() - sdf["RS"].min()) if "RS" in sdf.columns and len(sdf) else 0.0
 
-    # News sentiment summary (clip -10..+10), label & hit counts
-    s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
+    # Date window label (SAFE)
+    try:
+        s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
+        e_date = core_df.index[-1].strftime('%Y/%m/%d')
+    except Exception:
+        s_date, e_date = "-", "-"
+
+    # News sentiment summary (SAFE): always initialize before use
+    market_context = ""
+    m_sent = 0
+    m_meta = {}
+    try:
+        _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
+    except Exception:
+        # Keep defaults; AI/news will degrade gracefully
+        pass
+
+    # Clip -10..+10, label & hit counts
+    try:
+        s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
+    except Exception:
+        s_score = 0
     lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
     hit_pos = int(m_meta.get("pos", 0)) if isinstance(m_meta, dict) else 0
     hit_neg = int(m_meta.get("neg", 0)) if isinstance(m_meta, dict) else 0
-
-    
-    s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
-    e_date = core_df.index[-1].strftime('%Y/%m/%d')
-    _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
     
     # Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
     index_name = get_name(bench)
