@@ -904,35 +904,53 @@ button{
         return
 
     audit = audit_data_availability(core_tickers, core_df, win)
-    bench_used = bench
-    if bench not in audit.get("list", []):
-        # try proxy benchmark tickers (yfinance occasionally misses)
-        proxy_map = {
-            "SPY": ["^GSPC", "VOO", "IVV"],
-            "QQQ": ["^NDX", "^IXIC"],
-            "EEM": ["ACWX", "VT"],
-            "EWJ": ["^N225", "1321.T", "1306.T"],
-        }
-        proxies = proxy_map.get(bench, []) + [t for t in ["^GSPC","^N225"] if t != bench]
-        for p in proxies:
-            if p in core_df.columns and core_df[p].dropna().shape[0] >= win + 1:
-                bench_used = p
-                st.info(f"BENCHMARK MISSING: using proxy {bench_used} (requested {bench})")
-                break
-        else:
-            st.warning("BENCHMARK MISSING: continuing with available series (market pulse may be degraded)")
 
+    # --- BENCHMARK SAFE HANDLING ---
+    # yfinance occasionally fails to return a benchmark column (or returns all-NaN).
+    # For a commercial app we must *never* crash; instead:
+    # 1) use requested benchmark if available,
+    # 2) else use a sector-average proxy (from available sector ETFs),
+    # 3) else fall back to the first available series with enough history.
+    bench_used = bench
+    bench_ser = None
+
+    try:
+        if bench in core_df.columns and core_df[bench].dropna().shape[0] >= win + 1:
+            bench_ser = core_df[bench]
+        else:
+            # Sector-average proxy (preferred: stable + market-representative)
+            sector_cols = [t for t in m_cfg["sectors"].values() if t in core_df.columns and core_df[t].dropna().shape[0] >= win + 1]
+            if len(sector_cols) >= 2:
+                bench_ser = core_df[sector_cols].mean(axis=1)
+                bench_used = f"{bench} (proxy: sector avg)"
+                st.info(f"BENCHMARK MISSING: using proxy (sector avg). requested={bench}")
+            else:
+                # Any available series with enough history
+                avail_cols = [c for c in core_df.columns if core_df[c].dropna().shape[0] >= win + 1]
+                if avail_cols:
+                    bench_ser = core_df[avail_cols[0]]
+                    bench_used = f"{bench} (proxy: {avail_cols[0]})"
+                    st.info(f"BENCHMARK MISSING: using proxy {avail_cols[0]}. requested={bench}")
+                else:
+                    st.warning("BENCHMARK MISSING: no valid series available (market pulse degraded)")
+                    bench_ser = core_df.iloc[:, 0]
+
+    except Exception:
+        # Absolute last resort: pick first column to avoid crashing
+        st.warning("BENCHMARK ERROR: continuing with fallback series (market pulse degraded)")
+        bench_ser = core_df.iloc[:, 0]
 
     # 1. Market Pulse
-    b_stats = calc_technical_metrics(core_df[bench_used], core_df[bench_used], win)
-    if not b_stats: st.error("BENCH ERROR"); return
+    b_stats = calc_technical_metrics(bench_ser, bench_ser, win)
+    if not b_stats:
+        st.error("BENCH ERROR")
+        return
 
-    regime, weight_mom = calculate_regime(core_df[bench_used].dropna())
-    
+    regime, weight_mom = calculate_regime(bench_ser.dropna())
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
         if s_t in audit["list"]:
-            res = calc_technical_metrics(core_df[s_t], core_df[bench_used], win)
+            res = calc_technical_metrics(core_df[s_t], bench_ser, win)
             if res:
                 res["Sector"] = s_n
                 sec_rows.append(res)
