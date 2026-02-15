@@ -2,6 +2,7 @@ import os
 import time
 import re
 import math
+import html as html_lib
 import urllib.parse
 import urllib.request
 import traceback
@@ -469,9 +470,17 @@ def build_company_overview(profile: Dict[str, Any], enable_ai: bool, nonce: int 
         elif mcap >= 1e6:
             mcap_disp = f"{mcap/1e6:.0f}M"
 
+    # Summary: prefer faithful translation when available; otherwise fall back to conservative AI summary from FACTS only.
     summary = str(profile.get("BusinessSummary") or "").strip()
-    # If yfinance has no summary, ask AI to produce a conservative one from facts only
-    if enable_ai:
+
+    # Translate to Japanese (translation only, no new facts) when AI is enabled and the source is not Japanese.
+    if enable_ai and summary and (not _looks_japanese(summary)):
+        tr = translate_summary_to_japanese_cached(summary[:1200], nonce=nonce)
+        if tr:
+            summary = tr
+
+    # If yfinance has no summary, ask AI to produce a conservative one from facts only (still JP).
+    if enable_ai and (not summary):
         facts = {
             "name": name,
             "sector": sector,
@@ -479,7 +488,7 @@ def build_company_overview(profile: Dict[str, Any], enable_ai: bool, nonce: int 
             "country": country,
             "website": website or "-",
             "marketCap": mcap_disp,
-            "yfinance_summary": (summary[:800] if summary else "-"),
+            "yfinance_summary": "-",
         }
         ai_sum = ai_company_summary_cached(name, facts, nonce=nonce)
         if ai_sum:
@@ -488,11 +497,21 @@ def build_company_overview(profile: Dict[str, Any], enable_ai: bool, nonce: int 
     if not summary:
         summary = "-"
 
+    # Keep "overview_html" summary-free (UI-safe), but keep "overview_plain" with Summary for AI context/logging.
     overview_html = f"Sector:{sector} | Industry:{industry} | MCap:{mcap_disp} | Country:{country}"
+    overview_plain = f"Sector:{sector} | Industry:{industry} | MCap:{mcap_disp} | Summary:{summary}"
+
     return {
-        "name": name, "sector": sector, "industry": industry, "country": country,
-        "website": website, "mcap": mcap, "mcap_disp": mcap_disp,
-        "summary": summary, "overview_html": overview_html, "overview_plain": overview_plain
+        "name": name,
+        "sector": sector,
+        "industry": industry,
+        "country": country,
+        "website": website,
+        "mcap": mcap,
+        "mcap_disp": mcap_disp,
+        "summary": summary,
+        "overview_html": overview_html,
+        "overview_plain": overview_plain,
     }
 
 # --- AI & TEXT ---
@@ -522,6 +541,57 @@ def clean_ai_text(text: str) -> str:
     text = text.replace('\u0001', '')
     text = re.sub(r'(?m)^\s*\\1', '', text)
     return re.sub(r"\n{2,}", "\n", text).strip()
+
+
+def _looks_japanese(s: str) -> bool:
+    """Heuristic: detect Japanese scripts (Hiragana/Katakana/Kanji)."""
+    try:
+        return bool(re.search(r"[ぁ-ゔァ-ヴー一-龥]", str(s)))
+    except Exception:
+        return False
+
+def text_to_safe_html(text: Any) -> str:
+    """Escape text for safe HTML embedding (prevents HTML injection).
+    Converts newlines to <br> for display inside st.markdown(unsafe_allow_html=True) wrappers.
+    """
+    if text is None:
+        return ""
+    t = str(text)
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    return html_lib.escape(t, quote=True).replace("\n", "<br>")
+
+@st.cache_data(ttl=24*3600, show_spinner=False)
+def translate_summary_to_japanese_cached(summary_text: str, nonce: int = 0) -> str:
+    """Translate an English business summary into Japanese (faithful, no new facts).
+    Returns empty string on failure (fail-closed).
+    """
+    try:
+        if summary_text is None:
+            return ""
+        src = str(summary_text).strip()
+        if not src or src in ("-", "nan", "None"):
+            return ""
+        if _looks_japanese(src):
+            return src
+        if not HAS_LIB or not API_KEY:
+            return ""
+        m = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = f"""
+あなたは金融文書の翻訳者。
+以下の英文のCompany Summaryを、日本語に忠実に翻訳せよ。
+
+禁止: 新しい事実の追加、推測、内容の増補、誇張、具体例の創作。
+厳守: 数字・地名・事業セグメント名・会社名・ティッカーは意味を変えず保持する。
+文体: だ・である調。
+出力: 翻訳本文のみ（箇条書きや見出しは不要）。
+
+英文: {src}
+"""
+        out = m.generate_content(prompt).text or ""
+        out = clean_ai_text(out)
+        return out if _looks_japanese(out) else ""
+    except Exception:
+        return ""
 
 
 def quality_gate_text(text: str, enable: bool = True) -> str:
@@ -709,9 +779,15 @@ def enforce_da_dearu_soft(text: str) -> str:
     return text
 
 def market_to_html(text: str) -> str:
-    text = re.sub(r"(^\(\+\s*\).*$)", r"<span class='hl-pos'>\1</span>", text, flags=re.MULTILINE)
-    text = re.sub(r"(^\(\-\s*\).*$)", r"<span class='hl-neg'>\1</span>", text, flags=re.MULTILINE)
-    return text.replace("\n", "<br>")
+    """Render Market Pulse text safely inside HTML wrappers.
+
+    - Escapes any HTML from the model (prevents injection)
+    - Keeps our own highlighting spans for (+)/(−) lines
+    """
+    safe = html_lib.escape(str(text) if text is not None else "", quote=True)
+    safe = re.sub(r"(^\(\+\s*\).*$)", r"<span class='hl-pos'>\1</span>", safe, flags=re.MULTILINE)
+    safe = re.sub(r"(^\(\-\s*\).*$)", r"<span class='hl-neg'>\1</span>", safe, flags=re.MULTILINE)
+    return safe.replace("\n", "<br>")
 
 @st.cache_data(ttl=1800)
 def get_news_consolidated(ticker: str, name: str, market_key: str, limit_each: int = 10) -> Tuple[List[dict], str, int, Dict[str,int]]:
@@ -1129,7 +1205,9 @@ def _compress_bullets_in_views(content: str) -> str:
 
 def parse_agent_debate(text: str) -> str:
     """Parse tagged multi-agent debate and render in a fixed, pro layout.
-    Always enforce: SECTOR_OUTLOOK -> (agents...) -> JUDGE (styled).
+
+    Security: model-provided content is HTML-escaped (no injection).
+    Only our own minimal tags (<div>/<span>/<br>) are emitted.
     """
     mapping = {
         "[SECTOR_OUTLOOK]": ("agent-outlook", "SECTOR OUTLOOK"),
@@ -1143,21 +1221,21 @@ def parse_agent_debate(text: str) -> str:
         "[TOPPICK_JUDGE]": ("agent-verdict", "TOP PICK JUDGE"),
         "[TOP_PICK]": ("agent-verdict", "TOP PICK JUDGE"),
     }
-    clean = clean_ai_text(text.replace("```html", "").replace("```", ""))
+    clean = clean_ai_text(str(text).replace("```html", "").replace("```", ""))
     parts = re.split(r'(\[[A-Z_]+\])', clean)
 
     buckets: Dict[str, str] = {}
     cur = None
-    buf = []
+    buf: List[str] = []
     for p in parts:
         if p in mapping:
-            if cur and buf:
+            if cur is not None and buf:
                 buckets[cur] = (buckets.get(cur, "") + "\n" + "".join(buf)).strip()
             cur = p
             buf = []
         else:
             buf.append(p)
-    if cur and buf:
+    if cur is not None and buf:
         buckets[cur] = (buckets.get(cur, "") + "\n" + "".join(buf)).strip()
 
     order = [
@@ -1173,48 +1251,50 @@ def parse_agent_debate(text: str) -> str:
         "[RISK]",
     ]
 
-    html = ""
+    out_html = ""
     for tag in order:
         if tag not in buckets or not buckets[tag].strip():
             continue
         cls, label = mapping[tag]
         content = buckets[tag].strip()
+
         if tag == "[JUDGE]":
             # Judge should not show a separate 'Sector view:' block (avoid duplication)
-            content = re.sub(r"(?mi)^Sector view:\s*.*?(\n\s*\n|\n(?=Stock pick:)|\Z)", "", content)
-            content = content.strip()
-        # remove extra headings like 'トリガー:' / 'Triggers:'; keep the sentence inside Sector view / Stock pick flow
+            content = re.sub(r"(?mi)^Sector view:\s*.*?(\n\s*\n|\n(?=Stock pick:)|\Z)", "", content).strip()
+
+        # Remove extra headings like 'トリガー:' / 'Triggers:'
         content = re.sub(r"(?mi)^(?:トリガー|トリガー\s*\(.*?\)|Triggers?)\s*[:：]\s*", "", content)
-        # compact: remove excessive blank lines
         content = re.sub(r"\n{3,}", "\n\n", content)
-        # remove stray backreference artifacts (\\1) and SOH that sometimes leak from regex replacement
+        # remove regex backref artifacts + SOH
         content = re.sub(r"(?m)^\s*(?:\\\\1|\x01)\s*", "", content)
-        # remove any leading backslash-number artifacts like \1 that may appear at line starts
-        content = re.sub(r'(?m)^\s*\\\d+\s*', '', content)
-        # RISK block: flatten bullet lists into prose inside Sector view / Stock pick
-        if tag == '[RISK]':
+        content = re.sub(r"(?m)^\s*\\\d+\s*", "", content)
+        if tag == "[RISK]":
             content = _compress_bullets_in_views(content)
         content = content.replace("\\1", "").replace("\x01", "")
-        # emphasize required sub-structure if present
-        content = re.sub(r"(?m)^(Sector view:\s*)", r"<span class=\'subhead\'>\1</span>", content)
-        content = re.sub(r"(?m)^(Stock pick:\s*)", r"<span class=\'subhead\'>\1</span>", content)
-        content_html = "<div class='agent-content'>" + content.replace("\n", "<br>") + "</div>"
+
+        # --- HTML sanitization: escape model content ---
+        safe = html_lib.escape(content, quote=True)
+
+        # Re-add our own safe emphasis (after escaping)
+        safe = re.sub(r"(?m)^(Sector view:\s*)", r"<span class='subhead'>\1</span>", safe)
+        safe = re.sub(r"(?m)^(Stock pick:\s*)", r"<span class='subhead'>\1</span>", safe)
+
+        content_html = "<div class='agent-content'>" + safe.replace("\n", "<br>") + "</div>"
 
         if tag == "[SECTOR_OUTLOOK]":
-            html += (
+            out_html += (
                 f"<div class='{cls}' style='border-left:5px solid #00f2fe; margin-bottom:10px; padding:10px 12px;'>"
                 f"<span class='orbitron' style='letter-spacing:0.8px; font-weight:900;'>{label}</span><br>{content_html}</div>"
             )
         elif tag == "[JUDGE]":
-            # Judge: visually distinct
-            html += (
+            out_html += (
                 f"<div class='agent-row {cls}' style='margin-top:10px; padding:12px 14px; border:1px solid rgba(255,0,85,0.45); background: rgba(255,0,85,0.06);'>"
                 f"<div class='agent-label' style='color:#ff0055; font-weight:800;'>{label}</div>{content_html}</div>"
             )
         else:
-            html += f"<div class='agent-row {cls}'><div class='agent-label'>{label}</div>{content_html}</div>"
+            out_html += f"<div class='agent-row {cls}'><div class='agent-label'>{label}</div>{content_html}</div>"
 
-    return html
+    return out_html
 def run():
     # --- 1. INITIALIZE STATE ---
     if "system_logs" not in st.session_state: st.session_state.system_logs = []
@@ -1791,7 +1871,10 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
         "nonce": st.session_state.ai_nonce
     })
     sec_ai_txt = quality_gate_text(enforce_da_dearu_soft(sec_ai_raw), enable=st.session_state.get('qc_on', True))
-    sec_ai_html = parse_agent_debate(sec_ai_txt) if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt) else sec_ai_txt
+    if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt):
+        sec_ai_html = parse_agent_debate(sec_ai_txt)
+    else:
+        sec_ai_html = text_to_safe_html(sec_ai_txt)
     st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
     # Download Council Log (before leaderboard)
     st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_target_sector_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
@@ -1898,16 +1981,31 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     website = fund_data.get("Website") or "-"
 
     # Keep summary ONLY as hidden AI context (not shown as a duplicated UI block)
-    bsum = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
+    bsum_raw = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
+    bsum_raw = re.sub(r"\s+", " ", bsum_raw).strip()
+    bsum_src = (bsum_raw[:1200] if bsum_raw else "")
+    bsum_ja = ""
+    try:
+        bsum_ja = translate_summary_to_japanese_cached(bsum_src, nonce=st.session_state.ai_nonce)
+    except Exception:
+        bsum_ja = ""
+    bsum = (bsum_ja.strip() if bsum_ja else bsum_src)
     if len(bsum) > 280:
         bsum = bsum[:280].rstrip() + "…"
 
     overview_for_ai = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Summary:{bsum if bsum else '-'}"
     overview_display = f"Sector: {sec_name} | Industry: {ind_name} | Market Cap: {mcap_disp}"
 
+    overview_display_html = html_lib.escape(str(overview_display), quote=True)
+
+    website_html = html_lib.escape(str(website), quote=True)
+
     st.markdown(
-        f"<div class='note-box'><b>Company Overview</b><br>{overview_display}<br>Website: {website}</div>",
+
+        f"<div class='note-box'><b>Company Overview</b><br>{overview_display_html}<br>Website: {website_html}</div>",
+
         unsafe_allow_html=True
+
     )
 
     # --- External chart links (1Y chart removed by design) ---
@@ -1922,7 +2020,9 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
             return tk
         yf_url = f"https://finance.yahoo.com/quote/{top['Ticker']}"
         tv_url = f"https://www.tradingview.com/symbols/{_tv_symbol(top['Ticker'])}/"
-        st.markdown(f"<div class='mini-note'>Charts: <a href='{yf_url}' target='_blank'>Yahoo Finance</a> | <a href='{tv_url}' target='_blank'>TradingView</a></div>", unsafe_allow_html=True)
+        yf_url_e = html_lib.escape(str(yf_url), quote=True)
+        tv_url_e = html_lib.escape(str(tv_url), quote=True)
+        st.markdown(f"<div class='mini-note'>Charts: <a href='{yf_url_e}' target='_blank'>Yahoo Finance</a> | <a href='{tv_url_e}' target='_blank'>TradingView</a></div>", unsafe_allow_html=True)
     except Exception:
         pass
 
@@ -1940,7 +2040,9 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     if pa:
         price_act = f"Last {pa.get('Last',np.nan):.2f} | 1D {pa.get('1D',np.nan):+.2f}% | 1W {pa.get('1W',np.nan):+.2f}% | 1M {pa.get('1M',np.nan):+.2f}% | 3M {pa.get('3M',np.nan):+.2f}% | 200DMA {pa.get('200DMA_Dist',np.nan):+.1f}% | MaxDD(6M) {pa.get('MaxDD_6M',np.nan):.1f}%"
 
-    st.markdown(f"<div class='kpi-strip mono'>{price_act}</div>", unsafe_allow_html=True)
+    price_act_html = html_lib.escape(str(price_act), quote=True)
+
+    st.markdown(f"<div class='kpi-strip mono'>{price_act_html}</div>", unsafe_allow_html=True)
 
     bench_per = dash(bench_fd.get("PER"))
     sector_per = dash(pd.to_numeric(df["PER"], errors="coerce").median())
@@ -1973,7 +2075,8 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_txt_disp}</div>", unsafe_allow_html=True)
+        report_html = text_to_safe_html(report_txt_disp)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_html}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
