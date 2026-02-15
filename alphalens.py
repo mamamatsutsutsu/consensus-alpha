@@ -324,6 +324,8 @@ def enforce_market_format(text: str) -> str:
     # Remove common assistant boilerplate/meta
     text = re.sub(r"(?im)^\s*(はい、)?\s*承知(いた)?しました[。!！]*.*\n+", "", text)
     text = re.sub(r"(?im)^\s*以下に.*(作成|生成).*(します|いたします)[。!！]*\s*$", "", text)
+    # Remove '予定日:' label if present in outlook bullets
+    text = re.sub(r"(?im)^\s*-\s*予定日\s*[:：]\s*", "- ", text)
 
     # Remove unwanted date suffix right after the outlook header
 
@@ -579,7 +581,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         1) 【市場概況】（文章で記述。箇条書き禁止。材料→結果を因果で、数値必須。指数名={context.get('index_label','')}を本文に必ず入れる）
         2) 【主な変動要因】（文章でよい。上昇要因と下落要因をそれぞれ具体に書く。片方しか無い場合はある方だけでよいが、可能な限り両方を書く。見出し語は「上昇要因:」「下落要因:」を各1回だけ使い、その後は文章で続ける）
         3) 【今後3ヶ月のコンセンサス見通し】
-        - 予定日は必ず次の候補日から選んで書け：{slot_line}
+        - 日付は次の候補日から選んで書け（本文に「予定日」という語は使うな）：{slot_line}
         - 90日以内に起きやすい具体イベント/予定を最大6つ列挙（日付も想定せよ）
         - 各行は「イベント名(時期)→株価に効きやすい方向→理由」
         - 最後に強気/弱気の条件分岐
@@ -690,7 +692,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         3) 需給/センチメント（直近リターンから逆回転条件）
         4) ニュース/非構造情報（事象→業績→3ヶ月株価ドライバー）
         5) 3ヶ月見通し（ベース/強気/弱気シナリオ）
-        6) 監視ポイント（次の決算や金利等）
+        6) 監視ポイント（この銘柄に固有のKPI/イベント/競合/規制/価格指標に紐づける。一般論禁止。次の決算日が取れている場合は必ず含める）
         """
 
     attempts = 3 if prompt_key == "sector_debate" else (1 if prompt_key == "sector_debate_fast" else 2)
@@ -835,9 +837,9 @@ div[data-testid="stDataFrame"] *{
 /* Report */
 .report-box{
   background: #0a0a0a; border-top: 2px solid #00f2fe;
-  padding: 22px; margin-top: 12px;
+  padding: 14px; margin-top: 10px;
   font-size: var(--fz-body) !important;
-  line-height: 2.0;
+  line-height: 1.75;
   color: #eee;
   white-space: pre-wrap;
 }
@@ -854,7 +856,7 @@ div[data-testid="stDataFrame"] *{
 }
 
 /* Agent Council */
-.agent-row{ display:flex; gap:12px; border:1px solid #222; padding:10px; margin:8px 0; background:#0b0b0b; width:100%; box-sizing:border-box; }
+.agent-row{ display:flex; gap:10px; border:1px solid #222; padding:8px; margin:6px 0; background:#0b0b0b; width:100%; box-sizing:border-box; }
 .agent-label{ flex:0 0 70px; min-width:70px; max-width:70px; font-family:'Orbitron',sans-serif !important; font-size:12px; color:#9adbe2; text-align:right; font-weight:700; word-break:break-word; line-height:1.15; padding-top:2px; }
 .agent-content{ flex:1 1 auto; min-width:0; white-space:pre-wrap; line-height:1.9; overflow-wrap:anywhere; }
 .agent-verdict{ width:100%; box-sizing:border-box; overflow-wrap:anywhere; word-break:break-word; }
@@ -879,6 +881,10 @@ button{
   font-family:'Orbitron',sans-serif; font-size:12px; color:#00f2fe; text-align:center;
   margin:8px 0 6px 0; padding:8px; border:1px solid #223; background:#050b0c;
 }
+/* Compact spacing */
+.element-container{ margin-bottom: .35rem !important; }
+.stMarkdown p{ margin: .25rem 0 !important; }
+
 </style>
 """, unsafe_allow_html=True)
     
@@ -891,8 +897,8 @@ button{
     with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
     with c4:
         st.write("")
-        run_ai = st.button("RUN AI AGENTS", type="primary", use_container_width=True)
-        refresh_prices = st.button("REFRESH PRICES", use_container_width=True)
+        run_ai = st.button("✨ GENERATE AI INSIGHTS", type="primary", use_container_width=True)
+        refresh_prices = st.button("🔄 RELOAD MARKET DATA", use_container_width=True)
 
     # Reset sector selection when MARKET/WINDOW changes
     prev_market = st.session_state.last_market_key
@@ -1222,7 +1228,7 @@ button{
     sec_ai_html = parse_agent_debate(sec_ai_txt) if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt) else sec_ai_txt
     st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
     # Download Council Log (before leaderboard)
-    st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_{target_sector}.txt")
+    st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_target_sector_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
     st.caption(
         "DEFINITIONS | Apex: zscore合成=weight_mom*z(RS)+(0.8-weight_mom)*z(Accel)+0.2*z(Ret) | "
@@ -1255,6 +1261,8 @@ button{
     
     st.caption(
         "SOURCE & NOTES | Price: yfinance.download(auto_adjust=True) | Fundamentals: yfinance.Ticker().info | "
+        "Up/Down: 期間リターンが + の銘柄数 / それ以外（0以下）の銘柄数 | "
+
         "PER/PBR: 負値は除外 | ROE/RevGrow/OpMargin/Beta: 取得できる場合のみ表示 | "
         "Apex/RS/Accel等は本アプリ算出"
     )
