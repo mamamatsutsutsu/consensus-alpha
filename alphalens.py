@@ -1162,6 +1162,43 @@ button{
     
     # Sector Stats
     sector_stats = f"Universe:{len(stock_list)} Computable:{len(df)} MedianRS:{df['RS'].median():.2f} MedianRet:{df['Ret'].median():.1f}% SpreadRS:{(df['RS'].max()-df['RS'].min()):.2f}"
+
+    # ---- stringify context for AI (never undefined) ----
+    sector_stats_str = sector_stats
+
+    # Candidates (top pick + optional avoid) as compact lines
+    top3_str = "\n".join([x for x in cand_lines if isinstance(x, str) and x.strip()]) if 'cand_lines' in locals() else ""
+    if not top3_str:
+        try:
+            top3_str = top_line
+        except Exception:
+            top3_str = ""
+
+    # News to text (cap length, robust to schema)
+    def _news_to_str(items, limit=6):
+        if not items:
+            return ""
+        out = []
+        for it in list(items)[:limit]:
+            try:
+                if isinstance(it, dict):
+                    title = it.get("title") or it.get("Title") or it.get("headline") or ""
+                    src = it.get("source") or it.get("Source") or it.get("publisher") or ""
+                elif isinstance(it, (list, tuple)) and len(it) >= 1:
+                    title = str(it[0])
+                    src = str(it[1]) if len(it) > 1 else ""
+                else:
+                    title = str(it)
+                    src = ""
+                title = str(title).strip()
+                src = str(src).strip()
+                if title:
+                    out.append(f"- {title}" + (f" ({src})" if src else ""))
+            except Exception:
+                continue
+        return "\n".join(out)
+
+    sec_news_str = _news_to_str(sec_news, limit=6) if 'sec_news' in locals() else ""
     
     # 🦅 🤖 AI AGENT SECTOR REPORT (fast, top-pick focused)
     tp = df.iloc[0]
