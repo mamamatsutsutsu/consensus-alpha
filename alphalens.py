@@ -957,6 +957,15 @@ button{
     
     if not sec_rows: st.warning("SECTOR DATA INSUFFICIENT"); return
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
+
+    # Spread (pt): sector RS max - min. Robustly default to 0.0 to avoid crashes.
+    try:
+        rs_num = pd.to_numeric(sdf.get("RS"), errors="coerce")
+        spread = float(rs_num.max() - rs_num.min())
+        if not np.isfinite(spread):
+            spread = 0.0
+    except Exception:
+        spread = 0.0
     
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
