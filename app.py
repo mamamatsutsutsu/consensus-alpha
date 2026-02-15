@@ -2,6 +2,13 @@ import time
 import streamlit as st
 import alphalens
 
+# NEXT GEN APP (Theme Portfolio Builder)
+try:
+    from next_gen_app_tab import render_next_gen_tab  # type: ignore
+except Exception:
+    render_next_gen_tab = None  # type: ignore
+
+
 st.set_page_config(page_title="AlphaLens Pro", layout="wide", initial_sidebar_state="collapsed", page_icon="🦅")
 
 def _gate():
@@ -39,7 +46,6 @@ def main():
     if not _gate():
         st.stop()
 
-    from next_gen_app_tab import render_next_gen_tab  # NEW
     t1, t2 = st.tabs(["ALPHALENS", "NEXT GEN APP"])
     with t1:
         try:
@@ -51,10 +57,17 @@ def main():
                 logs = st.session_state.get("system_logs", [])
                 st.text("\n".join(logs[-120:]) if logs else "(empty)")
     with t2:
-        try:
-            render_next_gen_tab(data_dir='data')
-        except Exception as e:
-            st.error('NEXT GEN APP failed to render. Details below.')
-            st.exception(e)
+        st.markdown("<h1 style='font-family:Orbitron, sans-serif; color:#00f2fe;'>NEXT GEN APP</h1>", unsafe_allow_html=True)
+        st.caption("AI (Gemini)でテーマ投資のユニバース構築・TRR推定・ランキングを行うモジュールです。")
+
+        if render_next_gen_tab is None:
+            st.warning("next_gen_app_tab.py が見つかりません。プロジェクト直下に追加してから再起動してください。")
+        else:
+            try:
+                render_next_gen_tab(data_dir="data")
+            except Exception as e:
+                st.error("NEXT GEN APP error. Details below (also recorded in logs).")
+                st.exception(e)
+
 if __name__ == "__main__":
     main()
