@@ -259,73 +259,12 @@ def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
     return out
 
 # --- AI & TEXT ---
-# NOTE: Secrets/API keys are resolved lazily to avoid import-time failures.
-_GENAI = None
-_HAS_GENAI = None
-_GENAI_DIAG = {"online": False, "reason": "not_initialized", "key_found": False}
-
-def _resolve_gemini_api_key() -> Optional[str]:
-    """Resolve Gemini API key from Streamlit secrets or environment variables."""
-    key = None
-    try:
-        key = (
-            st.secrets.get("GEMINI_API_KEY", None)
-            or st.secrets.get("GOOGLE_API_KEY", None)
-            or st.secrets.get("GOOGLE_GENERATIVEAI_API_KEY", None)
-        )
-    except Exception:
-        key = None
-    return key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_GENERATIVEAI_API_KEY")
-
-def init_genai() -> bool:
-    """Initialize google.generativeai once. Returns True if available+configured.
-
-    This is intentionally *lazy* to avoid Streamlit import-time crashes.
-    """
-    global _GENAI, _HAS_GENAI, _GENAI_DIAG
-    if _HAS_GENAI is not None:
-        return bool(_HAS_GENAI)
-    try:
-        import google.generativeai as genai  # type: ignore
-        key = _resolve_gemini_api_key()
-        _GENAI_DIAG["key_found"] = bool(key)
-        _GENAI = genai
-        if not key:
-            _HAS_GENAI = False
-            _GENAI_DIAG["online"] = False
-            _GENAI_DIAG["reason"] = "api_key_missing"
-            return False
-        try:
-            genai.configure(api_key=key)
-            _HAS_GENAI = True
-            _GENAI_DIAG["online"] = True
-            _GENAI_DIAG["reason"] = "ok"
-            return True
-        except Exception as e:
-            _HAS_GENAI = False
-            _GENAI_DIAG["online"] = False
-            _GENAI_DIAG["reason"] = f"configure_failed: {type(e).__name__}"
-            return False
-    except ModuleNotFoundError:
-        _GENAI = None
-        _HAS_GENAI = False
-        _GENAI_DIAG["online"] = False
-        _GENAI_DIAG["reason"] = "google-generativeai_not_installed"
-        return False
-    except Exception as e:
-        _GENAI = None
-        _HAS_GENAI = False
-        _GENAI_DIAG["online"] = False
-        _GENAI_DIAG["reason"] = f"init_failed: {type(e).__name__}"
-        return False
-
-def get_genai():
-    init_genai()
-    return _GENAI
-
-def genai_diag() -> Dict[str, Any]:
-    init_genai()
-    return dict(_GENAI_DIAG)
+API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+try:
+    import google.generativeai as genai
+    HAS_LIB = True
+    if API_KEY: genai.configure(api_key=API_KEY)
+except: HAS_LIB = False
 
 def clean_ai_text(text: str) -> str:
     text = text.replace("```text", "").replace("```", "")
@@ -333,6 +272,10 @@ def clean_ai_text(text: str) -> str:
     text = re.sub(r"(?m)^\s*text\s*$", "", text)
     text = re.sub(r"(?m)^\s*#{2,}\s*", "", text)
     text = re.sub(r"(?im)^\s*(agent|エージェント)\s*[A-E0-9]+[:：]\s*", "", text)
+    # strip polite / meta preambles
+    text = re.sub(r"(?m)^\s*(はい、)?\s*承知(いたしました|しました)。?.*$\n?", "", text)
+    text = re.sub(r"(?m)^\s*以下に(.*)作成(する|します)。?.*$\n?", "", text)
+    text = re.sub(r"(?m)^\s*ご依頼(.*)ありがとうございます。?.*$\n?", "", text)
     bad = ["不明", "わからない", "分からない", "unknown"]
     for w in bad: text = re.sub(rf"(?m)^.*{re.escape(w)}.*$\n?", "", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
@@ -372,82 +315,104 @@ def force_nonempty_outlook_market(text: str, trend: str, ret: float, spread: flo
     return text
 
 def enforce_market_format(text: str) -> str:
-    if "【主な変動要因】" not in text: text += "\n【主な変動要因】\n(+ )\n(- )"
-    text = re.sub(r"\n\s*\n(【主な変動要因】)", r"\n\1", text)
-    text = re.sub(r"(。)(【主な変動要因】)", r"\1\n\2", text)
-    if "【今後3ヶ月" not in text: text += "\n【今後3ヶ月のコンセンサス見通し】\n( )"
-    text = re.sub(r"\n\s*\n(【今後3ヶ月[^】]*】)", r"\n\1", text)
-    return text.strip()
+    # Basic required headers
+    if "【市場概況】" not in text:
+        text = "【市場概況】
+" + text.strip()
+    if "【主な変動要因】" not in text:
+        text += "
+【主な変動要因】
+(+) 上昇要因:
+(-) 下落要因:"
+    if "【今後3ヶ月" not in text:
+        text += "
+【今後3ヶ月のコンセンサス見通し】
+"
 
+    # Remove extra blank lines between headers
+    text = re.sub(r"
+\s*
+(【)", r"
+\1", text)
+    # Remove unnecessary date suffix after outlook header (e.g., "【今後3ヶ月...】2026-02-22")
+    text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\(?\d{4}-\d{2}-\d{2}\)?", r"\1", text)
+
+    # Normalize EventA/B/C... placeholders into readable names if present
+    event_map = {
+        "イベントA": "米インフレ指標",
+        "イベントB": "地政学リスク",
+        "イベントC": "主要企業決算",
+        "イベントD": "FOMC/金融政策",
+        "イベントE": "原油・OPEC動向",
+        "イベントF": "長期金利動向",
+    }
+    for k,v in event_map.items():
+        text = text.replace(k, v)
+
+    return text.strip()
 def enforce_index_naming(text: str, index_label: str) -> str:
-    """Replace vague '市場平均' wording and force index label mention."""
-    if not text:
+    if not index_label:
         return text
-    t = text.replace("市場平均", index_label).replace("マーケット平均", index_label).replace("ベンチマーク", index_label)
-    # Ensure the index label is stated at least once near the top (AI sometimes forgets)
-    if index_label and index_label not in t:
-        t = f"{index_label}を基準に記述する。\n" + t
-    return t
+    # Replace vague wording with explicit index label
+    text = re.sub(r"市場平均(リターン)?", index_label, text)
+    text = re.sub(r"指数(?:全体)?", index_label, text)
+    # Ensure the index label appears at least once in the market overview
+    if index_label not in text and "【市場概況】" in text:
+        text = re.sub(r"(【市場概況】\n?)", rf"\1{index_label}を基準に記述する。\n", text, count=1)
+    return text
 
 def group_plus_minus_blocks(text: str) -> str:
-    """Ensure 【主な変動要因】 has separated (+)/(−) groups and no mixing."""
-    if not text:
-        return text
-    # Extract the factor block
-    m = re.search(r"【主な変動要因】(.*?)(?=【|\Z)", text, flags=re.DOTALL)
+    # Extract the block
+    m = re.search(r"【主な変動要因】\n?(.*?)(?=\n【|\Z)", text, flags=re.DOTALL)
     if not m:
         return text
-    block = m.group(1).strip("\n")
-    # Normalize lines
-    raw_lines = [re.sub(r"\s+$","",ln) for ln in block.splitlines() if ln.strip()]
-    plus, minus, other = [], [], []
-    for ln in raw_lines:
-        s = ln.strip()
-        # Drop existing headers
-        if re.match(r"^\(\+\)|^\(−\)|^\(-\)|^\(\–\)", s):
-            # keep content after marker
-            content = re.sub(r"^\(\+\)\s*","",s)
-            content = re.sub(r"^\((?:−|-|–)\)\s*","",content)
-            # decide by marker present in original
-            if s.startswith("(+)"):
-                plus.append(content)
-            else:
-                minus.append(content)
+    block = m.group(1).strip()
+    lines = [l.strip() for l in block.splitlines() if l.strip()]
+
+    # remove fake headings that often get bulletized
+    heading_trash = {"上昇要因:", "下落要因:", "(+) 上昇要因:", "(-) 下落要因:", "（+）上昇要因:", "（−）下落要因:"}
+    cleaned = []
+    for l in lines:
+        l2 = l.lstrip("-・ ").strip()
+        if l2 in heading_trash:
             continue
-        if re.match(r"^(\+|▲|上昇|強気|好材料)", s):
-            plus.append(re.sub(r"^(\+|▲)\s*","",s))
-        elif re.match(r"^(−|-|▼|下落|弱気|悪材料)", s):
-            minus.append(re.sub(r"^(?:−|-|▼)\s*","",s))
+        # remove "イベントA" etc accidentally placed here
+        if l2.startswith("3)") or "今後3ヶ月" in l2:
+            continue
+        cleaned.append(l)
+
+    pos, neg, oth = [], [], []
+    pos_kw = ["上方修正","増益","好調","回復","低下","鈍化","利下げ","買い","資金流入","強い","上昇","改善","割安","自社株買い","需要増","受注増"]
+    neg_kw = ["下方修正","減益","悪化","失速","再加速","利上げ","引き締め","売り","資金流出","下落","警戒","高止まり","リスク","地政学","長期金利上昇","ボラティリティ","懸念"]
+
+    for l in cleaned:
+        raw = l.lstrip("-・ ").strip()
+        # explicit sign markers
+        if raw.startswith("(+)") or raw.startswith("＋") or raw.startswith("+"):
+            pos.append(raw.lstrip("()+＋+ ").strip())
+            continue
+        if raw.startswith("(-)") or raw.startswith("−") or raw.startswith("-"):
+            neg.append(raw.lstrip("()-−- ").strip())
+            continue
+        # keyword routing
+        score = 0
+        if any(k in raw for k in pos_kw): score += 1
+        if any(k in raw for k in neg_kw): score -= 1
+        if score > 0:
+            pos.append(raw)
+        elif score < 0:
+            neg.append(raw)
         else:
-            other.append(s)
+            oth.append(raw)
 
-    # If no clear classification, keep original
-    if not plus and not minus:
-        return text
-
-    def fmt(lines_):
-        return "\n".join([f"- {x}" if not x.startswith("-") else x for x in lines_])
-
-    rebuilt = []
-    rebuilt.append("【主な変動要因】")
-    if plus:
-        rebuilt.append("(+) 上昇要因:")
-        rebuilt.append(fmt(plus))
-    if minus:
-        rebuilt.append("(−) 下落要因:")
-        rebuilt.append(fmt(minus))
-    if other:
-        rebuilt.append("(補足):")
-        rebuilt.append(fmt(other))
-
-    new_block = "\n".join(rebuilt)
-
-    # Replace old block
-    out = text[:m.start()] + new_block + text[m.end():]
-    # Remove double blank lines (policy)
-    out = re.sub(r"\n{3,}", "\n\n", out)
-    return out
-
+    # Build normalized section
+    def bullets(arr):
+        return "\n".join([f"- {x}" for x in arr[:6]]) if arr else "- （該当材料を抽出できず）"
+    out = "【主な変動要因】\n(+) 上昇要因:\n" + bullets(pos) + "\n(−) 下落要因:\n" + bullets(neg)
+    if oth:
+        out += "\n(補足):\n" + "\n".join([f"- {x}" for x in oth[:6]])
+    # Replace original block
+    return text[:m.start()] + out + text[m.end():]
 def enforce_da_dearu_soft(text: str) -> str:
     text = re.sub(r"です。", "だ。", text)
     text = re.sub(r"です$", "だ", text, flags=re.MULTILINE)
@@ -456,8 +421,8 @@ def enforce_da_dearu_soft(text: str) -> str:
     return text
 
 def market_to_html(text: str) -> str:
-    text = re.sub(r"(^\(\+\s*\).*$)", r"<span class='highlight'>\1</span>", text, flags=re.MULTILINE)
-    text = re.sub(r"(^\(\-\s*\).*$)", r"<span class='highlight-neg'>\1</span>", text, flags=re.MULTILINE)
+    text = re.sub(r"(^\(\+\s*\).*$)", r"<span class='hl-pos'>\1</span>", text, flags=re.MULTILINE)
+    text = re.sub(r"(^\(\-\s*\).*$)", r"<span class='hl-neg'>\1</span>", text, flags=re.MULTILINE)
     return text.replace("\n", "<br>")
 
 @st.cache_data(ttl=1800)
@@ -509,6 +474,36 @@ def get_news_consolidated(ticker: str, name: str, market_key: str, limit_each: i
                     if any(w in t for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
     except: pass
 
+    # Free public RSS feeds (fallback / enrichment). English-only is OK.
+    try:
+        rss_sources = [
+            ("Reuters Markets", "https://feeds.reuters.com/reuters/marketsNews"),
+            ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
+            ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
+            ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+            ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
+        ]
+        for src, url2 in rss_sources:
+            try:
+                with urllib.request.urlopen(url2, timeout=3) as r:
+                    root = ET.fromstring(r.read())
+                    for it in root.findall('.//item')[: max(3, limit_each//3) ]:
+                        t2, l2, d2 = it.findtext('title'), it.findtext('link'), it.findtext('pubDate')
+                        try: pub2 = int(email.utils.parsedate_to_datetime(d2).timestamp())
+                        except: pub2 = 0
+                        if not t2: continue
+                        news_items.append({"title": t2, "link": l2, "pub": pub2, "src": src})
+                        dt2 = datetime.fromtimestamp(pub2).strftime('%Y/%m/%d') if pub2 else "-"
+                        weight = 2 if (pub2 and (time.time() - pub2) < 172800) else 1
+                        context_lines.append(f"- [{src} {dt2}] {t2}")
+                        if any(w in t2 for w in pos_words): sentiment_score += 1*weight; meta["pos"] += 1
+                        if any(w in t2 for w in neg_words): sentiment_score -= 1*weight; meta["neg"] += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
     news_items.sort(key=lambda x: x["pub"], reverse=True)
     return news_items, "\n".join(context_lines[:15]), sentiment_score, meta
 
@@ -517,37 +512,34 @@ def temporal_sanity_flags(text: str) -> List[str]:
     return [w for w in bad if w in text]
 
 def sector_debate_quality_ok(text: str) -> bool:
-    needed = ["[SECTOR_OUTLOOK]", "[MOMENTUM]", "[NEWS]", "[RISK]", "[JUDGE]"]
-    if any(t not in text for t in needed):
-        return False
+    needed = ["[SECTOR_OUTLOOK]", "[FUNDAMENTAL]", "[SENTIMENT]", "[VALUATION]", "[SKEPTIC]", "[RISK]", "[JUDGE]"]
+    if any(t not in text for t in needed): return False
     min_chars = {
-        "[SECTOR_OUTLOOK]": 60,
-        "[MOMENTUM]": 110,
-        "[NEWS]": 140,
-        "[RISK]": 90,
-        "[JUDGE]": 120,
+        "[SECTOR_OUTLOOK]": 220, "[FUNDAMENTAL]": 260, "[SENTIMENT]": 260,
+        "[VALUATION]": 220, "[SKEPTIC]": 220, "[RISK]": 220, "[JUDGE]": 520,
     }
     for k, mn in min_chars.items():
-        m = re.search(re.escape(k) + r"(.*?)(?=\n\[[A-Z_]+\]|$)", text, flags=re.DOTALL)
-        if not m or len(re.sub(r"[ \t\r\n]+", "", m.group(1))) < mn:
-            return False
-    if re.search(r"(?im)(承知|以下に|作成する|ですます|私はエージェント|僕はエージェント)", text):
-        return False
+        m = re.search(re.escape(k) + r"(.*?)(?=\n\[[A-Z_]+\]|\Z)", text, flags=re.DOTALL)
+        if not m or len(re.sub(r"\s+", "", m.group(1))) < mn: return False
+    if re.search(r"(?im)(私はエージェント|僕はエージェント|俺はエージェント|エージェント[A-E])", text): return False
     return True
 
 @st.cache_data(ttl=3600)
 def generate_ai_content(prompt_key: str, context: Dict) -> str:
-    genai = get_genai()
-    if not init_genai() or genai is None:
-        return "AI OFFLINE"
+    if not HAS_LIB or not API_KEY: return "AI OFFLINE"
     
     models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
     p = ""
     market_n = context.get('market_name', 'Global')
     today_str = datetime.now().strftime('%Y年%m月%d日')
-    slot_line = context.get('slot_line')
+    # slot_line: candidate dates for the next 3 months (used in market prompt)
+    slot_line = context.get("slot_line")
     if not slot_line:
-        slot_line = ", ".join(context.get('date_slots') or outlook_date_slots())
+        # fallback: today + 7d steps (within 90 days)
+        base = datetime.now().date()
+        slots = [base + timedelta(days=d) for d in [7,14,21,28,35,42,49,56,63,70,77,84]]
+        slot_line = ", ".join([s.strftime("%Y-%m-%d") for s in slots])
+    
     
     if prompt_key == "market":
         p = f"""
@@ -577,32 +569,62 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         - 最後に強気/弱気の条件分岐
         - この期間から外れる季節表現（年末年始、来年など）は禁止
         """
+    elif prompt_key == "sector_debate_fast":
+        p = f"""
+        現在: {today_str}
+        あなたは5名の専門エージェント。対象市場は{market_n}。
+        対象セクター:{context["sec"]}
+        セクター統計:{context.get("sector_stats","")}
+        トップ候補(定量/モメンタム中心):
+        {context.get("top","")}
+        ニュース（必ず根拠に使う。直近優先）:
+        {context.get("news","")}
+        Nonce:{context.get("nonce",0)}
+
+        厳守:
+        - 文体は「だ・である」。自己紹介、承知しました等の前置きは禁止。
+        - 3ヶ月で最も上がる確度が高い1銘柄だけを推奨対象にする。
+        - 重視順: 直近ニュース/株価モメンタム(1M/3M/RS) ＞ リスク(最大DD/高値乖離) ＞ バリュエーション。
+        - 抽象語（不透明、堅調、注視、様子見）禁止。数値と因果で書く。
+
+        出力（タグ固定、全体で600〜900字目安）:
+        [SECTOR_OUTLOOK] セクター全体の3ヶ月見通し（3〜5文）
+        [TOP_PICK] 推奨銘柄（ティッカー含む）と、なぜ今それが上がりやすいか（5〜7文。ニュースを少なくとも2本根拠にする）
+        [RISK_TRIGGERS] 3つ（何が起きると外れるか/下がるか）
+        [JUDGE] 結論を1文で断定（買い/見送り等）、次に見るべき1指標を1つだけ。
+        """
     elif prompt_key == "sector_debate":
         p = f"""
         現在: {today_str}
-        対象市場:{market_n}
+        あなたは5名の専門エージェント。対象市場は{market_n}。
         対象セクター:{context['sec']}
-        トップピック候補（この1銘柄のみを議論対象にせよ）:
+        候補データ（必ず比較で使う）:
         {context['candidates']}
-        セクター関連ニュース（直近優先。根拠として最低3本は引用せよ）:
+        ニュース（非構造、必ず引用して根拠化）:
         {context.get('news','')}
         Nonce:{context.get('nonce',0)}
 
-        目的:
-        - 今後3ヶ月で当該セクター内で最も株価上昇が見込めるトップピックを1銘柄に確定する。
-        - 優先順位は「株価モメンタム（1M/3M/RS/Accel）＞直近ニュース需給＞バリュエーション＞ファンダ」である。
+        厳守ルール:
+        - 文体は「だ・である」。です・ます調は禁止。
+        - 各エージェントは最低8行以上。短文禁止。具体で書く。
+        - 定量の優先順位は「モメンタム/センチメント＞バリュエーション＞ファンダ」である。
+        - 「抽象語（不透明、堅調、注視、様子見）」は禁止。必ず何が起きるとどう動くかを書く。
 
-        厳守:
-        - 文体は「だ・である」。前置き・自己紹介・承諾文は禁止。
-        - 抽象語（不透明、堅調、注視、様子見）は禁止。必ず因果（材料→期待→価格）で書く。
-        - 出力は短く濃く。全体で600〜900字程度。JUDGEは最大6行。
-
+        タスク:
+        1) まず冒頭に[SECTOR_OUTLOOK]タグで、セクター全体の見通し（{today_str}から3ヶ月）を宣言抜きで記述。
+        2) その後、各エージェントが、冒頭1文でセクター見通しを述べたうえで、候補を比較し結論を書く。
+        
+        [JUDGE]では、トップピック1銘柄と次点2銘柄を決定し、その論理的根拠を詳細（従来の5倍の分量）に記述せよ。
+        ネガティブな銘柄があれば具体的に指摘せよ。
+        
         出力フォーマット（タグ厳守）:
-        [SECTOR_OUTLOOK] セクター全体の3ヶ月見通し（2〜4行）
-        [MOMENTUM] 当該銘柄のモメンタム評価（定量を必ず引用）
-        [NEWS] 直近ニュースの解釈（最低3本引用し、どう株価に効くか）
-        [RISK] 反証・逆回転条件（3つ）
-        [JUDGE] トップピック確定。3ヶ月の上昇ドライバーと監視トリガーを箇条書きで。
+        [SECTOR_OUTLOOK] ...
+        [FUNDAMENTAL] ...
+        [SENTIMENT] ...
+        [VALUATION] ...
+        [SKEPTIC] ...
+        [RISK] ...
+        [JUDGE] ...
         """
     elif prompt_key == "sector_report":
         p = f"""
@@ -640,6 +662,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         記号(「**」や「""」)は使用禁止。
         「不明」「わからない」という言葉は禁止。データがない場合は言及しない。
         株価動向とニュースは必ず因果で結び、材料→期待→株価の順で説明せよ。
+        分量: 900-1400字程度。冗長な言い換え禁止。各段落は新情報/新しい推論のみ。
         
         必ず次の順に出力（見出し固定）：
         1) 定量サマリー（株価動向/バリュエーション/リターン）
@@ -650,7 +673,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         6) 監視ポイント（次の決算や金利等）
         """
 
-    attempts = 3 if prompt_key == "sector_debate" else 2
+    attempts = 3 if prompt_key == "sector_debate" else (1 if prompt_key == "sector_debate_fast" else 2)
     last_text = ""
     for a in range(attempts):
         extra = ""
@@ -677,8 +700,10 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
 def parse_agent_debate(text: str) -> str:
     mapping = {
         "[SECTOR_OUTLOOK]": ("agent-outlook", "SECTOR OUTLOOK"),
-        "[MOMENTUM]": ("agent-momentum", "MOMENTUM"),
-        "[NEWS]": ("agent-news", "NEWS"),
+        "[FUNDAMENTAL]": ("agent-fundamental", "FUNDAMENTAL"),
+        "[SENTIMENT]": ("agent-sentiment", "SENTIMENT"),
+        "[VALUATION]": ("agent-valuation", "VALUATION"),
+        "[SKEPTIC]": ("agent-skeptic", "SKEPTIC"),
         "[RISK]": ("agent-risk", "RISK"),
         "[JUDGE]": ("agent-verdict", "JUDGE")
     }
@@ -816,8 +841,9 @@ div[data-testid="stDataFrame"] *{
 .agent-outlook{ border:1px solid #1d3c41; padding:12px; margin:8px 0; background:#061012; border-left:5px solid #00f2fe; }
 
 /* Highlights */
-.highlight{ color:#00f2fe; font-weight:700; }
-.highlight-neg{ color:#ff0055; font-weight:700; }
+.hl-pos{ color:#2cff7e; font-weight:800; }
+.hl-neg{ color:#ff3b7a; font-weight:800; }
+.hl-neutral{ color:#ffd166; font-weight:800; }
 
 /* Buttons */
 button{
@@ -833,130 +859,111 @@ button{
   font-family:'Orbitron',sans-serif; font-size:12px; color:#00f2fe; text-align:center;
   margin:8px 0 6px 0; padding:8px; border:1px solid #223; background:#050b0c;
 }
-.brand-row{display:flex;align-items:center;gap:14px}
-.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-family:'Orbitron',sans-serif;font-size:11px;border:1px solid #333}
-.badge.ok{color:#00f2fe;border-color:#00f2fe;box-shadow:0 0 14px rgba(0,242,254,0.35)}
-.badge.warn{color:#ffcc00;border-color:#ffcc00;box-shadow:0 0 14px rgba(255,204,0,0.25)}
-.brand{
-  text-shadow: 0 0 18px rgba(0,242,254,0.25), 0 0 42px rgba(255,0,85,0.12);
-}
-body{
-  background: radial-gradient(1200px 800px at 10% 10%, rgba(0,242,254,0.08), transparent 60%),
-              radial-gradient(1200px 800px at 90% 20%, rgba(255,0,85,0.06), transparent 60%),
-              radial-gradient(900px 600px at 60% 90%, rgba(255,204,0,0.05), transparent 55%),
-              #050506;
-}
 </style>
 """, unsafe_allow_html=True)
     
-    diag = genai_diag()
-    ai_badge = "<span class='badge ok'>AI ONLINE</span>" if diag.get('online') else "<span class='badge warn'>AI OFFLINE</span>"
-    st.markdown(f"<div class='brand-row'><h1 class='brand'>ALPHALENS</h1>{ai_badge}</div>", unsafe_allow_html=True)
-    if not diag.get('online'):
-        with st.expander('Why AI is offline?', expanded=False):
-            st.code(str(diag), language='json')
-
+    st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
     
     # 0. Controls
-    c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
+    c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1.0])
     with c1: market_key = st.selectbox("MARKET", list(MARKETS.keys()))
     with c2: lookback_key = st.selectbox("WINDOW", list(LOOKBACKS.keys()), index=1)
     with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
     with c4:
         st.write("")
-        run_ai = st.button("RUN AI AGENTS", type="primary", use_container_width=True, help="Re-generate Market Pulse & Agent debate using current MARKET/WINDOW")
-        refresh_data = st.button("REFRESH PRICES", use_container_width=True, help="Clear cache and re-download market prices")
+        run_ai = st.button("RUN AI AGENTS", type="primary", use_container_width=True)
+        refresh_prices = st.button("REFRESH PRICES", use_container_width=True)
 
-    # Logic: Reset Sector if Market OR Lookback changes
+    # Reset sector selection when MARKET/WINDOW changes
     if (st.session_state.last_market_key != market_key) or (st.session_state.last_lookback_key != lookback_key):
         st.session_state.selected_sector = None
         st.session_state.last_market_key = market_key
         st.session_state.last_lookback_key = lookback_key
-    if refresh_data:
-        st.cache_data.clear()
-        st.session_state.pop("core_df", None)
-        st.session_state.pop("sec_df", None)
-        st.toast("Prices refreshed", icon="🔄")
-        st.rerun()
 
     if run_ai:
+        # bust only AI cache (keeps price cache for speed)
         st.session_state.ai_nonce += 1
-        st.toast("AI triggered", icon="🧠")
+        st.toast("🤖 Running AI agents…", icon="🤖")
+
+    if refresh_prices:
+        # full refresh: clear cached price fetch + reset derived dfs
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        for k in ["core_df","sec_df","sec_stats","news_cache"]:
+            if k in st.session_state:
+                del st.session_state[k]
+        st.session_state.selected_sector = None
+        st.toast("🔄 Refreshed prices", icon="🔄")
 
     m_cfg = MARKETS[market_key]
     win = LOOKBACKS[lookback_key]
     bench = m_cfg["bench"]
-    
     # --- DATA FETCHING ---
     core_tickers = [bench] + list(m_cfg["sectors"].values())
-    if "core_df" not in st.session_state:
-        with st.spinner("Fetching market data..."):
+    if refresh_prices or "core_df" not in st.session_state:
+        with st.spinner("FETCHING MARKET DATA..."):
             raw = fetch_market_data(tuple(core_tickers), FETCH_PERIOD)
             st.session_state.core_df = extract_close_prices(raw, core_tickers)
-    
+
     core_df = st.session_state.get("core_df", pd.DataFrame())
-    if core_df.empty or len(core_df) < win + 1: st.warning("WAITING FOR DATA..."); return
-    # Date range label for UI (based on benchmark window)
-    try:
-        _idx = core_df[bench].dropna().tail(win + 1).index
-        if len(_idx) >= 2:
-            s_date = pd.to_datetime(_idx[0]).strftime('%Y-%m-%d')
-            e_date = pd.to_datetime(_idx[-1]).strftime('%Y-%m-%d')
-        else:
-            s_date = '-'
-            e_date = '-'
-    except Exception:
-        s_date = '-'
-        e_date = '-'
-
-
-    audit = audit_data_availability(core_tickers, core_df, win)
-    bench_for_calc = bench
-    if bench not in audit.get("list", []):
-        proxy = (audit.get("list") or [bench])[0]
-        bench_for_calc = proxy
-        st.warning(f"BENCHMARK MISSING: using {proxy} as a proxy for window alignment (best-effort).")
-
-    # 1. Market Pulse
-    b_stats = calc_technical_metrics(core_df[bench_for_calc], core_df[bench_for_calc], win)
-    if not b_stats:
-        st.error("BENCH ERROR")
+    if core_df.empty or len(core_df) < win + 1:
+        st.warning("WAITING FOR DATA...")
         return
 
-    regime, weight_mom = calculate_regime(core_df[bench_for_calc].dropna())
+    audit = audit_data_availability(core_tickers, core_df, win)
+    bench_used = bench
+    if bench not in audit.get("list", []):
+        # try proxy benchmark tickers (yfinance occasionally misses)
+        proxy_map = {
+            "SPY": ["^GSPC", "VOO", "IVV"],
+            "QQQ": ["^NDX", "^IXIC"],
+            "EEM": ["ACWX", "VT"],
+            "EWJ": ["^N225", "1321.T", "1306.T"],
+        }
+        proxies = proxy_map.get(bench, []) + [t for t in ["^GSPC","^N225"] if t != bench]
+        for p in proxies:
+            if p in core_df.columns and core_df[p].dropna().shape[0] >= win + 1:
+                bench_used = p
+                st.info(f"BENCHMARK MISSING: using proxy {bench_used} (requested {bench})")
+                break
+        else:
+            st.warning("BENCHMARK MISSING: continuing with available series (market pulse may be degraded)")
 
+
+    # 1. Market Pulse
+    b_stats = calc_technical_metrics(core_df[bench_used], core_df[bench_used], win)
+    if not b_stats: st.error("BENCH ERROR"); return
+
+    regime, weight_mom = calculate_regime(core_df[bench_used].dropna())
+    
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
-        if s_t in audit.get("list", []):
-            res = calc_technical_metrics(core_df[s_t], core_df[bench_for_calc], win)
+        if s_t in audit["list"]:
+            res = calc_technical_metrics(core_df[s_t], core_df[bench_used], win)
             if res:
                 res["Sector"] = s_n
                 sec_rows.append(res)
-
-    if not sec_rows:
-        st.warning("SECTOR DATA INSUFFICIENT")
-        return
-
+    
+    if not sec_rows: st.warning("SECTOR DATA INSUFFICIENT"); return
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
-
-    # Spread & NewsSent (SAFE)
-    spread = float(sdf["RS"].max() - sdf["RS"].min()) if "RS" in sdf.columns and len(sdf) else 0.0
-
-    # News sentiment summary (clip -10..+10), label & hit counts
-    market_context = ""
-    m_sent, m_meta = 0, {}
+    
+    s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
+    e_date = core_df.index[-1].strftime('%Y/%m/%d')
+    _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
+    # News sentiment (robust defaults)
     try:
-        _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
+        s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
     except Exception:
-        market_context = ""
-        m_sent, m_meta = 0, {}
-
-    s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
+        s_score = 0
     lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
-    hit_pos = int(m_meta.get("pos", 0)) if isinstance(m_meta, dict) else 0
-    hit_neg = int(m_meta.get("neg", 0)) if isinstance(m_meta, dict) else 0
+    hit_pos = int((m_meta or {}).get("pos", 0))
+    hit_neg = int((m_meta or {}).get("neg", 0))
+    s_cls = "hl-pos" if s_score > 0 else ("hl-neg" if s_score < 0 else "hl-neutral")
 
-# Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
+    
+    # Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
     index_name = get_name(bench)
     index_label = f"{index_name} ({bench})" if index_name else bench
 
@@ -970,7 +977,7 @@ body{
     <b>RS</b>: 相対リターン差(pt)=セクター(or銘柄)リターン−市場平均リターン
     </div>
     <b class='orbitron'>MARKET PULSE ({s_date} - {e_date})</b><br>
-    <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='highlight'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br><br>
+    <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='{s_cls}'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br><br>
     """ + market_to_html(force_nonempty_outlook_market(
         group_plus_minus_blocks(enforce_market_format(enforce_index_naming(generate_ai_content("market", {
             "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
@@ -1007,15 +1014,15 @@ body{
     fig.update_traces(
         customdata=np.stack([sdf_disp["Ret"]], axis=-1),
         hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>",
-        marker_color=sdf_disp['RS'], marker_colorscale='RdYlGn', marker_cmin=float(sdf_disp['RS'].min()), marker_cmax=float(sdf_disp['RS'].max()), marker_showscale=False,
-        marker_line_color=[('#e6e6e6' if (sec==click_sec) else 'rgba(0,0,0,0)') for sec in sdf_disp['Sector']],
-        marker_line_width=[2 if (sec==click_sec) else 0 for sec in sdf_disp['Sector']]
+        marker_color=colors
     )
     # Fix Plotly sorting (array order)
     fig.update_layout(height=420, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
                       font_color='#e0e0e0', font_family="JetBrains Mono", 
                       xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True, categoryorder="array", categoryarray=sdf_disp["Label"].tolist()[::-1]))
     st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True, 'displayModeBar': False})
+    
+    st.markdown("<div class='action-call'>👇 Select a SECTOR to run AI agents (Top Pick)</div>", unsafe_allow_html=True)
     
     # Buttons
     st.write("SELECT SECTOR:")
@@ -1040,7 +1047,7 @@ body{
     full_list = [bench] + stock_list
     cache_key = f"{market_key}_{target_sector}_{lookback_key}"
     
-    if cache_key != st.session_state.get("sec_cache_key") or sync:
+    if cache_key != st.session_state.get("sec_cache_key") or refresh_prices:
         with st.spinner(f"ANALYZING {len(stock_list)} STOCKS..."):
             raw_s = fetch_market_data(tuple(full_list), FETCH_PERIOD)
             st.session_state.sec_df = extract_close_prices(raw_s, full_list)
@@ -1063,62 +1070,68 @@ body{
     df["Apex"] = weight_mom * calculate_zscore(df["RS"]) + (0.8 - weight_mom) * calculate_zscore(df["Accel"]) + 0.2 * calculate_zscore(df["Ret"])
     df = df.sort_values("Apex", ascending=False)
     
-    # 4. 5-AGENT SECTOR COUNCIL
-    st.markdown("##### 🦅 🤖 AI AGENT SECTOR REPORT")
-    
-    # Top pick: focus on near-term upside (3M/1M/RS/Accel)
-    for col in ["1M", "3M"]:
-        if col not in df.columns:
-            df[col] = np.nan
-    score = 0.45 * calculate_zscore(df["3M"].fillna(df["Ret"])) + 0.35 * calculate_zscore(df["1M"].fillna(df["Ret"])) + 0.15 * calculate_zscore(df["RS"]) + 0.05 * calculate_zscore(df["Accel"])
-    df["TopPickScore"] = score
-    df = df.sort_values("TopPickScore", ascending=False)
-
-    top1 = df.head(1).copy()
-    cand_tickers = top1["Ticker"].tolist()
+    # 4. Top pick selection (fast)
+    top3 = df.head(1).copy()  # keep variable name for downstream code
+    neg = df.iloc[0:0].copy()  # empty
+    # Fetch fundamentals for Top3 + Neg for debate context
+    cand_tickers = top3["Ticker"].tolist()
+    if not neg.empty: cand_tickers.append(neg.iloc[0]["Ticker"])
     cand_fund = fetch_fundamentals_batch(cand_tickers).reset_index()
+    
+    # Build context lines
+    cand_lines = []
+    for _, r in top3.iterrows():
+        f = pick_fund_row(cand_fund, r["Ticker"])
+        cand_lines.append(
+            f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, RS {r['RS']:.2f}, Accel {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, "
+            f"MCap {sfloat(f.get('MCap',0))/1e9:.1f}B, PER {dash(f.get('PER'))}, PBR {dash(f.get('PBR'))}"
+        )
+    if not neg.empty:
+        nr = neg.iloc[0]
+        f = pick_fund_row(cand_fund, nr["Ticker"])
+        cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {dash(f.get('PER'))}")
 
-    r = top1.iloc[0]
-    f = pick_fund_row(cand_fund, r["Ticker"])
-    cand_lines = [
-        f"{r['Name']}({r['Ticker']}): Ret {r['Ret']:.1f}%, 1M {r.get('1M',np.nan):.1f}%, 3M {r.get('3M',np.nan):.1f}%, RS {r['RS']:.2f}, Accel {r['Accel']:.2f}, HighDist {r['HighDist']:.1f}%, MaxDD {r['MaxDD']:.1f}%, MCap {sfloat(f.get('MCap',0))/1e9:.1f}B, PER {dash(f.get('PER'))}, PBR {dash(f.get('PBR'))}"
-    ]
-
-    _, sec_news, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=4)
+    _, sec_news, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=6)
     
     # Sector Stats
     sector_stats = f"Universe:{len(stock_list)} Computable:{len(df)} MedianRS:{df['RS'].median():.2f} MedianRet:{df['Ret'].median():.1f}% SpreadRS:{(df['RS'].max()-df['RS'].min()):.2f}"
     
-    # COUNCIL DEBATE -> DISPLAY THEN BUTTON
-    sec_ai_raw = generate_ai_content("sector_debate", {
-        "sec": target_sector,
-        "candidates": "\n".join(cand_lines),
-        "news": sec_news,
-        "market_name": m_cfg["name"],
-        "nonce": st.session_state.ai_nonce
-    })
-    st.markdown(parse_agent_debate(sec_ai_raw), unsafe_allow_html=True)
-    st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_{target_sector}.txt")
-    
-    st.markdown("###### EVIDENCE (Top Pick)")
-    st.caption(
-        "DEFINITIONS | TopPickScore: 0.45*z(3M)+0.35*z(1M)+0.15*z(RS)+0.05*z(Accel) | "
-        "RS: Ret(銘柄)−Ret(市場平均) | Accel: 直近半期間リターン−(全期間リターン/2) | "
-        "HighDist: 直近価格の52週高値からの乖離(%) | MaxDD: 期間内最大ドローダウン(%)"
+    # 🦅 🤖 AI AGENT SECTOR REPORT (fast, top-pick focused)
+    tp = df.iloc[0]
+    tp_f = pick_fund_row(cand_fund, tp["Ticker"])
+    top_line = (
+        f"[TOP] {tp['Name']} ({tp['Ticker']}): Ret {tp['Ret']:.1f}%, RS {tp['RS']:.2f}, Accel {tp['Accel']:.2f}, "
+        f"HighDist {tp['HighDist']:.1f}%, MaxDD {tp['MaxDD']:.1f}%, "
+        f"MCap {sfloat(tp_f.get('MCap',0))/1e9:.1f}B, PER {dash(tp_f.get('PER'))}, PBR {dash(tp_f.get('PBR'))}"
     )
 
-    ev_fund = fetch_fundamentals_batch(top1["Ticker"].tolist()).reset_index()
-    ev_df = top1.merge(ev_fund, on="Ticker", how="left")
-    for c in ["PER","PBR"]:
-        if c in ev_df.columns:
-            ev_df[c] = ev_df[c].apply(lambda x: dash(x))
-    for c in ["ROE","RevGrow","OpMargin"]:
-        if c in ev_df.columns:
-            ev_df[c] = ev_df[c].apply(pct)
-    if "Beta" in ev_df.columns:
-        ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
+    sec_ai_raw = generate_ai_content("sector_debate_fast", {
+        "sec": target_sector,
+        "sector_stats": sector_stats,
+        "top": top_line,
+        "news": sec_news,
+        "market_name": m_cfg["name"],
+        "nonce": st.session_state.ai_nonce,
+    })
+    sec_ai_txt = clean_ai_text(enforce_da_dearu_soft(sec_ai_raw))
+    st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_txt}</div>", unsafe_allow_html=True)
+    # Download Council Log (before leaderboard)
+    st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_{target_sector}.txt")
 
-    st.dataframe(ev_df[["Name","Ticker","TopPickScore","RS","Accel","Ret","1M","3M","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
+    st.caption(
+        "DEFINITIONS | Apex: zscore合成=weight_mom*z(RS)+(0.8-weight_mom)*z(Accel)+0.2*z(Ret) | "
+        "RS: Ret(銘柄)−Ret(市場平均) | Accel: 直近半期間リターン−(全期間リターン/2) | "
+        "HighDist: 直近価格の52週高値からの乖離(%) | MaxDD: 期間内最大ドローダウン(%) | "
+        "PER/PBR/ROE等: yfinance.Ticker().info（負のPER/PBRは除外、欠損は'-'）"
+    )
+    
+    ev_fund = fetch_fundamentals_batch(top3["Ticker"].tolist()).reset_index()
+    ev_df = top3.merge(ev_fund, on="Ticker", how="left")
+    for c in ["PER","PBR"]: ev_df[c] = ev_df[c].apply(lambda x: dash(x))
+    for c in ["ROE","RevGrow","OpMargin"]: ev_df[c] = ev_df[c].apply(pct)
+    ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
+    
+    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","1M","3M","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
 
     # 5. Leaderboard
     universe_cnt = len(stock_list)
@@ -1157,8 +1170,7 @@ body{
 
     df_sorted = df_disp.sort_values("MCap", ascending=False)
     
-    st.markdown("<div class='action-call'>👆 Select one stock to generate the AI agents' analysis note below</div>", unsafe_allow_html=True)
-
+    st.markdown("<div class='action-call'>👇 Select ONE stock to generate the AI agents' analysis note below</div>", unsafe_allow_html=True)
     event = st.dataframe(
         df_sorted[["Name", "Ticker", "MCapDisp", "ROE", "RevGrow", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
         column_config={
@@ -1178,7 +1190,7 @@ body{
         hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
     )
     
-    
+
     # 6. Deep Dive
     top = df_sorted.iloc[0]
     try:
@@ -1227,7 +1239,6 @@ body{
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
         st.markdown(f"<div class='report-box'><b>AI ANALYST BRIEFING</b><br>{report_txt}</div>", unsafe_allow_html=True)
-        st.download_button("DOWNLOAD ANALYST NOTE", report_txt, f"analyst_note_{top['Ticker']}.txt")
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
@@ -1247,6 +1258,7 @@ body{
             df_peers = df_peers_base.sort_values("Dist").iloc[1:5]
             st.dataframe(df_peers[["Name", "ROE", "RevGrow", "PER", "PBR", "RS", "12M"]], hide_index=True)
         except: pass
+        st.download_button("DOWNLOAD ANALYST NOTE", report_txt, f"analyst_note_{top['Ticker']}.txt")
 
     with nc2:
         st.caption("INTEGRATED NEWS FEED")
