@@ -1726,6 +1726,20 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     except Exception:
         pass
 
+    # --- Website (keep only the official site; avoid repeating Sector/Industry/MCap/Summary again) ---
+    try:
+        website_url = str(fund_data.get("Website") or "").strip()
+        if website_url:
+            if website_url.startswith("http"):
+                st.markdown(
+                    f"<div class='mini-note'>Website: <a href='{website_url}' target='_blank'>{website_url}</a></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"<div class='mini-note'>Website: {website_url}</div>", unsafe_allow_html=True)
+    except Exception:
+        pass
+
     ed = fetch_earnings_dates(top["Ticker"]).get("EarningsDate", "-")
     bench_fd = get_fundamental_data(bench)
     
@@ -1756,18 +1770,7 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     })
     report_txt = clean_ai_text(report_txt)
     # Prepend Company Overview and Quantitative Summary (always) to the downloadable analyst note
-    overview_plain = re.sub(r"<[^>]+>", "", overview).strip() if isinstance(overview, str) else ""
-    if not overview_plain:
-        overview_plain = "Sector:- | Industry:- | MCap:- | Summary:-"
-    # --- Company Overview (always shown above the report as well) ---
-    # --- Company Overview (always visible; markdown-based to avoid CSS/HTML issues) ---
-    overview_md = f"""**Company Overview — {top['Name']} ({top['Ticker']})**
-- Sector: {sec_name}
-- Industry: {ind_name}
-- Market Cap: {mcap_disp}
-- Website: {fund_data.get('Website') or '-'}
-- Summary: {bsum if bsum else '-'}"""
-    st.markdown(overview_md)
+    # NOTE: Company Overview is already shown above (note-box). Avoid duplicating it again below Charts.
     analyst_note_txt = (
         "Company Overview\n" + f"Name: {top['Name']} ({top['Ticker']})\nSector: {sec_name}\nIndustry: {ind_name}\nMarket Cap: {mcap_disp}\nWebsite: {fund_data.get('Website') or '-'}\nSummary: {bsum if bsum else '-'}" + "\n\n"
         "Quantitative Summary\n" + fund_str + "\n\n"
@@ -1777,7 +1780,7 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{overview_plain}<br><br>{report_txt_disp}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_txt_disp}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
