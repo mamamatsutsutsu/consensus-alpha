@@ -1174,7 +1174,8 @@ button{
 
     sec_ai_raw = generate_ai_content("sector_debate_fast", {
         "sec": target_sector,
-        "market_name": market_n,
+        # Avoid NameError: use market config name directly (with safe fallback)
+        "market_name": m_cfg.get("name", str(market_key)),
         "sector_stats": sector_stats_str,
         "top": top3_str,
         "news": sec_news_str,
