@@ -1359,6 +1359,11 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
     st.markdown('<div class="tl-title">THEMELENS</div>', unsafe_allow_html=True)
     st.markdown('<div class="tl-subtitle">AI-first Theme Portfolio Builder</div>', unsafe_allow_html=True)
 
+# --- ここから追加 ---
+    st.warning("### 🚧 現在、システム作成中につきAI機能は停止しています 🚧")
+    # --- ここまで追加 ---
+
+
     ss = st.session_state
     ss.setdefault("tl_rows", None)           # ranked topN
     ss.setdefault("tl_meta", {})
@@ -1405,19 +1410,9 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
 
     # Start pipeline
     if build_btn:
-        ss["tl_rows"] = None
-        ss["tl_meta"] = {}
-        ss["tl_universe_tickers"] = None
-        ss["tl_trr_rows"] = None
-        ss["tl_stage"] = "tickers"
-        ss["tl_pipeline_start"] = time.time()
-        ss["tl_elapsed_final"] = None
 
-        cancel_event = threading.Event()
-        ss["tl_cancel_event"] = cancel_event
-        ss["tl_job"] = {"status":"running", "started_at": ss["tl_pipeline_start"]}
-        ss["tl_future"] = _executor().submit(job_auto_tickers, inp=inp, data_dir=data_dir, cancel_event=cancel_event)
-        _rerun()
+        st.error("現在、システム作成中のためAI分析は停止しています。")
+
 
     # Elapsed metric (live or final)
     pipeline_start = ss.get("tl_pipeline_start")
