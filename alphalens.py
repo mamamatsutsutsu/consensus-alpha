@@ -259,13 +259,44 @@ def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
     return out
 
 # --- AI & TEXT ---
-API_KEY = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
-try:
-    import google.generativeai as genai
-    HAS_LIB = True
-    if API_KEY: genai.configure(api_key=API_KEY)
-except: HAS_LIB = False
+# NOTE: Secrets/API keys are resolved lazily to avoid import-time failures.
+_GENAI = None
+_HAS_GENAI = None
 
+def _resolve_gemini_api_key() -> Optional[str]:
+    try:
+        key = (
+            st.secrets.get("GEMINI__resolve_gemini_api_key()", None)
+            or st.secrets.get("GOOGLE__resolve_gemini_api_key()", None)
+            or st.secrets.get("GOOGLE_GENERATIVEAI__resolve_gemini_api_key()", None)
+        )
+    except Exception:
+        key = None
+    return key or os.getenv("GEMINI__resolve_gemini_api_key()") or os.getenv("GOOGLE__resolve_gemini_api_key()") or os.getenv("GOOGLE_GENERATIVEAI__resolve_gemini_api_key()")
+
+def init_genai() -> bool:
+    """Initialize google.generativeai once. Returns True if available+configured."""
+    global _GENAI, _HAS_GENAI
+    if _HAS_GENAI is not None:
+        return bool(_HAS_GENAI)
+    try:
+        import google.generativeai as genai  # type: ignore
+        key = _resolve_gemini_api_key()
+        if key:
+            genai.configure(api_key=key)
+            _GENAI = genai
+            _HAS_GENAI = True
+        else:
+            _GENAI = genai
+            _HAS_GENAI = False
+    except Exception:
+        _GENAI = None
+        _HAS_GENAI = False
+    return bool(_HAS_GENAI)
+
+def get_genai():
+    init_genai()
+    return _GENAI
 def clean_ai_text(text: str) -> str:
     text = text.replace("```text", "").replace("```", "")
     text = text.replace("**", "").replace('"', "").replace("'", "")
@@ -319,56 +350,73 @@ def enforce_market_format(text: str) -> str:
     return text.strip()
 
 def enforce_index_naming(text: str, index_label: str) -> str:
-    if not index_label:
+    """Replace vague '市場平均' wording and force index label mention."""
+    if not text:
         return text
-    text = text.replace("市場平均", index_label)
-    return text
+    t = text.replace("市場平均", index_label).replace("マーケット平均", index_label).replace("ベンチマーク", index_label)
+    # Ensure the index label is stated at least once near the top (AI sometimes forgets)
+    if index_label and index_label not in t:
+        t = f"{index_label}を基準に記述する。\n" + t
+    return t
 
 def group_plus_minus_blocks(text: str) -> str:
-    lines = text.splitlines()
-    out = []
-    in_factors = False
-    plus, minus = [], []
-    def flush():
-        nonlocal plus, minus
-        if plus:
-            out.append("(+) 上昇要因:")
-            out.extend(plus)
-        if minus:
-            out.append("(-) 下落要因:")
-            out.extend(minus)
-        plus, minus = [], []
-    for ln in lines:
-        if "【主な変動要因】" in ln:
-            in_factors = True
-            out.append("【主な変動要因】")
-            continue
-        if in_factors and re.match(r"^【.+】", ln):
-            flush()
-            in_factors = False
-            out.append(ln)
-            continue
-        if in_factors:
-            s = ln.strip()
-            if not s:
-                continue
-            if s.startswith("(+)") or s.startswith("(＋)") or s.startswith("+") or s.startswith("＋"):
-                plus.append("・" + re.sub(r"^[\(\[]?[＋\+]\)?\s*", "", s).lstrip("・"))
-            elif s.startswith("(-)") or s.startswith("(−)") or s.startswith("-") or s.startswith("−"):
-                minus.append("・" + re.sub(r"^[\(\[]?[−\-]\)?\s*", "", s).lstrip("・"))
+    """Ensure 【主な変動要因】 has separated (+)/(−) groups and no mixing."""
+    if not text:
+        return text
+    # Extract the factor block
+    m = re.search(r"【主な変動要因】(.*?)(?=【|\Z)", text, flags=re.DOTALL)
+    if not m:
+        return text
+    block = m.group(1).strip("\n")
+    # Normalize lines
+    raw_lines = [re.sub(r"\s+$","",ln) for ln in block.splitlines() if ln.strip()]
+    plus, minus, other = [], [], []
+    for ln in raw_lines:
+        s = ln.strip()
+        # Drop existing headers
+        if re.match(r"^\(\+\)|^\(−\)|^\(-\)|^\(\–\)", s):
+            # keep content after marker
+            content = re.sub(r"^\(\+\)\s*","",s)
+            content = re.sub(r"^\((?:−|-|–)\)\s*","",content)
+            # decide by marker present in original
+            if s.startswith("(+)"):
+                plus.append(content)
             else:
-                if any(k in s for k in ["上昇","好感","増益","上方","買い","強い","反発","期待"]):
-                    plus.append("・" + s.lstrip("・"))
-                elif any(k in s for k in ["下落","嫌気","減益","下方","売り","弱い","反落","懸念"]):
-                    minus.append("・" + s.lstrip("・"))
-                else:
-                    plus.append("・" + s.lstrip("・"))
+                minus.append(content)
+            continue
+        if re.match(r"^(\+|▲|上昇|強気|好材料)", s):
+            plus.append(re.sub(r"^(\+|▲)\s*","",s))
+        elif re.match(r"^(−|-|▼|下落|弱気|悪材料)", s):
+            minus.append(re.sub(r"^(?:−|-|▼)\s*","",s))
         else:
-            out.append(ln)
-    if in_factors:
-        flush()
-    return "\n".join(out).strip()
+            other.append(s)
 
+    # If no clear classification, keep original
+    if not plus and not minus:
+        return text
+
+    def fmt(lines_):
+        return "\n".join([f"- {x}" if not x.startswith("-") else x for x in lines_])
+
+    rebuilt = []
+    rebuilt.append("【主な変動要因】")
+    if plus:
+        rebuilt.append("(+) 上昇要因:")
+        rebuilt.append(fmt(plus))
+    if minus:
+        rebuilt.append("(−) 下落要因:")
+        rebuilt.append(fmt(minus))
+    if other:
+        rebuilt.append("(補足):")
+        rebuilt.append(fmt(other))
+
+    new_block = "\n".join(rebuilt)
+
+    # Replace old block
+    out = text[:m.start()] + new_block + text[m.end():]
+    # Remove double blank lines (policy)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out
 
 def enforce_da_dearu_soft(text: str) -> str:
     text = re.sub(r"です。", "だ。", text)
@@ -453,7 +501,9 @@ def sector_debate_quality_ok(text: str) -> bool:
 
 @st.cache_data(ttl=3600)
 def generate_ai_content(prompt_key: str, context: Dict) -> str:
-    if not HAS_LIB or not API_KEY: return "AI OFFLINE"
+    genai = get_genai()
+    if not init_genai() or genai is None:
+        return "AI OFFLINE"
     
     models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
     p = ""
@@ -809,26 +859,20 @@ button{
     
     if not sec_rows: st.warning("SECTOR DATA INSUFFICIENT"); return
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
-    
+    # Spread & NewsSent (SAFE)
+    spread = float(sdf["RS"].max() - sdf["RS"].min()) if "RS" in sdf.columns and len(sdf) else 0.0
 
-    # Market rotation spread (RS max-min)
-    try:
-        spread = float(sdf["RS"].max() - sdf["RS"].min())
-    except Exception:
-        spread = 0.0
+    # News sentiment summary (clip -10..+10), label & hit counts
+    s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
+    lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
+    hit_pos = int(m_meta.get("pos", 0)) if isinstance(m_meta, dict) else 0
+    hit_neg = int(m_meta.get("neg", 0)) if isinstance(m_meta, dict) else 0
+
+    
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
     _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
     
-
-    # News sentiment summary
-    try:
-        s_score = int(max(-10, min(10, m_sent)))
-    except Exception:
-        s_score = 0
-    lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
-    hit_pos = int(m_meta.get("pos", 0)) if isinstance(m_meta, dict) else 0
-    hit_neg = int(m_meta.get("neg", 0)) if isinstance(m_meta, dict) else 0
     # Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
     index_name = get_name(bench)
     index_label = f"{index_name} ({bench})" if index_name else bench
