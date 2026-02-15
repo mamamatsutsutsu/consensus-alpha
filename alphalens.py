@@ -377,6 +377,9 @@ def enforce_market_format(text: str) -> str:
     text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\(\d{4}[-/]\d{2}[-/]\d{2}\)", r"\1", text)
     text = re.sub(r"(【今後3ヶ月[^】]*】)\s*\d{4}[-/]\d{2}[-/]\d{2}", r"\1", text)
 
+    # Remove standalone date line immediately following the outlook header
+    text = re.sub(r"(【今後3ヶ月[^】]*】)\n\s*\d{4}[-/]\d{2}[-/]\d{2}\s*\n", r"\1\n", text)
+
     # Ensure required headers exist
     if "【市場概況】" not in text:
         text = "【市場概況】\n" + text
@@ -840,6 +843,8 @@ def parse_agent_debate(text: str) -> str:
             # Judge should not show a separate 'Sector view:' block (avoid duplication)
             content = re.sub(r"(?mi)^Sector view:\s*.*?(\n\s*\n|\n(?=Stock pick:)|\Z)", "", content)
             content = content.strip()
+        # remove extra headings like 'トリガー:' / 'Triggers:'; keep the sentence inside Sector view / Stock pick flow
+        content = re.sub(r"(?mi)^(?:トリガー|トリガー\s*\(.*?\)|Triggers?)\s*[:：]\s*", "", content)
         # compact: remove excessive blank lines
         content = re.sub(r"\n{3,}", "\n\n", content)
         # remove stray backreference artifacts (\\1) and SOH that sometimes leak from regex replacement
@@ -1524,10 +1529,16 @@ button{
     if not overview_plain:
         overview_plain = "Sector:- | Industry:- | MCap:- | Summary:-"
     # --- Company Overview (always shown above the report as well) ---
-    overview_html = f"<div class=\"note-box\" style=\"margin:8px 0 10px 0;\"><b>Company Overview</b><br>{overview_plain}</div>"
-    st.markdown(overview_html, unsafe_allow_html=True)
+    # --- Company Overview (always visible; markdown-based to avoid CSS/HTML issues) ---
+    overview_md = f"""**Company Overview — {top['Name']} ({top['Ticker']})**
+- Sector: {sec_name}
+- Industry: {ind_name}
+- Market Cap: {mcap_disp}
+- Website: {fund_data.get('Website') or '-'}
+- Summary: {bsum if bsum else '-'}"""
+    st.markdown(overview_md)
     analyst_note_txt = (
-        "Company Overview\n" + overview_plain + "\n\n"
+        "Company Overview\n" + f"Name: {top['Name']} ({top['Ticker']})\nSector: {sec_name}\nIndustry: {ind_name}\nMarket Cap: {mcap_disp}\nWebsite: {fund_data.get('Website') or '-'}\nSummary: {bsum if bsum else '-'}" + "\n\n"
         "Quantitative Summary\n" + fund_str + "\n\n"
         + report_txt
     )
