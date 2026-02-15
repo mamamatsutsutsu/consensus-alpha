@@ -262,41 +262,71 @@ def fetch_earnings_dates(ticker: str) -> Dict[str,str]:
 # NOTE: Secrets/API keys are resolved lazily to avoid import-time failures.
 _GENAI = None
 _HAS_GENAI = None
+_GENAI_DIAG = {"online": False, "reason": "not_initialized", "key_found": False}
 
 def _resolve_gemini_api_key() -> Optional[str]:
+    """Resolve Gemini API key from Streamlit secrets or environment variables."""
+    key = None
     try:
         key = (
-            st.secrets.get("GEMINI__resolve_gemini_api_key()", None)
-            or st.secrets.get("GOOGLE__resolve_gemini_api_key()", None)
-            or st.secrets.get("GOOGLE_GENERATIVEAI__resolve_gemini_api_key()", None)
+            st.secrets.get("GEMINI_API_KEY", None)
+            or st.secrets.get("GOOGLE_API_KEY", None)
+            or st.secrets.get("GOOGLE_GENERATIVEAI_API_KEY", None)
         )
     except Exception:
         key = None
-    return key or os.getenv("GEMINI__resolve_gemini_api_key()") or os.getenv("GOOGLE__resolve_gemini_api_key()") or os.getenv("GOOGLE_GENERATIVEAI__resolve_gemini_api_key()")
+    return key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_GENERATIVEAI_API_KEY")
 
 def init_genai() -> bool:
-    """Initialize google.generativeai once. Returns True if available+configured."""
-    global _GENAI, _HAS_GENAI
+    """Initialize google.generativeai once. Returns True if available+configured.
+
+    This is intentionally *lazy* to avoid Streamlit import-time crashes.
+    """
+    global _GENAI, _HAS_GENAI, _GENAI_DIAG
     if _HAS_GENAI is not None:
         return bool(_HAS_GENAI)
     try:
         import google.generativeai as genai  # type: ignore
         key = _resolve_gemini_api_key()
-        if key:
-            genai.configure(api_key=key)
-            _GENAI = genai
-            _HAS_GENAI = True
-        else:
-            _GENAI = genai
+        _GENAI_DIAG["key_found"] = bool(key)
+        _GENAI = genai
+        if not key:
             _HAS_GENAI = False
-    except Exception:
+            _GENAI_DIAG["online"] = False
+            _GENAI_DIAG["reason"] = "api_key_missing"
+            return False
+        try:
+            genai.configure(api_key=key)
+            _HAS_GENAI = True
+            _GENAI_DIAG["online"] = True
+            _GENAI_DIAG["reason"] = "ok"
+            return True
+        except Exception as e:
+            _HAS_GENAI = False
+            _GENAI_DIAG["online"] = False
+            _GENAI_DIAG["reason"] = f"configure_failed: {type(e).__name__}"
+            return False
+    except ModuleNotFoundError:
         _GENAI = None
         _HAS_GENAI = False
-    return bool(_HAS_GENAI)
+        _GENAI_DIAG["online"] = False
+        _GENAI_DIAG["reason"] = "google-generativeai_not_installed"
+        return False
+    except Exception as e:
+        _GENAI = None
+        _HAS_GENAI = False
+        _GENAI_DIAG["online"] = False
+        _GENAI_DIAG["reason"] = f"init_failed: {type(e).__name__}"
+        return False
 
 def get_genai():
     init_genai()
     return _GENAI
+
+def genai_diag() -> Dict[str, Any]:
+    init_genai()
+    return dict(_GENAI_DIAG)
+
 def clean_ai_text(text: str) -> str:
     text = text.replace("```text", "").replace("```", "")
     text = text.replace("**", "").replace('"', "").replace("'", "")
@@ -802,10 +832,29 @@ button{
   font-family:'Orbitron',sans-serif; font-size:12px; color:#00f2fe; text-align:center;
   margin:8px 0 6px 0; padding:8px; border:1px solid #223; background:#050b0c;
 }
+.brand-row{display:flex;align-items:center;gap:14px}
+.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-family:'Orbitron',sans-serif;font-size:11px;border:1px solid #333}
+.badge.ok{color:#00f2fe;border-color:#00f2fe;box-shadow:0 0 14px rgba(0,242,254,0.35)}
+.badge.warn{color:#ffcc00;border-color:#ffcc00;box-shadow:0 0 14px rgba(255,204,0,0.25)}
+.brand{
+  text-shadow: 0 0 18px rgba(0,242,254,0.25), 0 0 42px rgba(255,0,85,0.12);
+}
+body{
+  background: radial-gradient(1200px 800px at 10% 10%, rgba(0,242,254,0.08), transparent 60%),
+              radial-gradient(1200px 800px at 90% 20%, rgba(255,0,85,0.06), transparent 60%),
+              radial-gradient(900px 600px at 60% 90%, rgba(255,204,0,0.05), transparent 55%),
+              #050506;
+}
 </style>
 """, unsafe_allow_html=True)
     
-    st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
+    diag = genai_diag()
+    ai_badge = "<span class='badge ok'>AI ONLINE</span>" if diag.get('online') else "<span class='badge warn'>AI OFFLINE</span>"
+    st.markdown(f"<div class='brand-row'><h1 class='brand'>ALPHALENS</h1>{ai_badge}</div>", unsafe_allow_html=True)
+    if not diag.get('online'):
+        with st.expander('Why AI is offline?', expanded=False):
+            st.code(str(diag), language='json')
+
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 0.6])
@@ -814,7 +863,10 @@ button{
     with c3: st.caption(f"FETCH: {FETCH_PERIOD}"); st.progress(100)
     with c4: 
         st.write("")
-        sync = st.button("SYNC", type="primary", use_container_width=True)
+        now_ts = time.time()
+        last_ts = st.session_state.get('last_sync_ts', 0.0)
+        sync_label = "SYNC" if (now_ts - last_ts) > 2.0 else "SYNCED ✓"
+        sync = st.button(sync_label, type="primary", use_container_width=True, key='sync_btn')
 
     # Logic: Reset Sector if Market OR Lookback changes
     if (st.session_state.last_market_key != market_key) or (st.session_state.last_lookback_key != lookback_key):
@@ -823,6 +875,9 @@ button{
         st.session_state.last_lookback_key = lookback_key
     
     if sync:
+        st.session_state['last_sync_ts'] = time.time()
+        try: st.toast('Synced market data', icon='🔄')
+        except Exception: pass
         st.session_state.selected_sector = None
         st.session_state.ai_nonce += 1
 
@@ -943,7 +998,9 @@ button{
     fig.update_traces(
         customdata=np.stack([sdf_disp["Ret"]], axis=-1),
         hovertemplate="%{y}<br>Ret: %{customdata[0]:+.1f}%<br>RS: %{x:.2f}<extra></extra>",
-        marker_color=colors
+        marker_color=sdf_disp['RS'], marker_colorscale='RdYlGn', marker_cmin=float(sdf_disp['RS'].min()), marker_cmax=float(sdf_disp['RS'].max()), marker_showscale=False,
+        marker_line_color=[('#e6e6e6' if (sec==click_sec) else 'rgba(0,0,0,0)') for sec in sdf_disp['Sector']],
+        marker_line_width=[2 if (sec==click_sec) else 0 for sec in sdf_disp['Sector']]
     )
     # Fix Plotly sorting (array order)
     fig.update_layout(height=420, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
@@ -1105,6 +1162,8 @@ button{
 
     df_sorted = df_disp.sort_values("MCap", ascending=False)
     
+    st.markdown("<div class='action-call'>👆 Select one stock to generate the AI agents' analysis note below</div>", unsafe_allow_html=True)
+
     event = st.dataframe(
         df_sorted[["Name", "Ticker", "MCapDisp", "ROE", "RevGrow", "PER", "PBR", "Apex", "RS", "1M", "12M"]],
         column_config={
@@ -1124,8 +1183,7 @@ button{
         hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="stock_table"
     )
     
-    st.markdown("<div class='action-call'>👆 銘柄を1つ選択すると、下にAIエージェントの分析ノートを生成</div>", unsafe_allow_html=True)
-
+    
     # 6. Deep Dive
     top = df_sorted.iloc[0]
     try:
