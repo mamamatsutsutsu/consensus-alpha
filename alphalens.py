@@ -640,33 +640,43 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         現在: {today_str}
         あなたは5名の専門エージェント。対象市場は{market_n}。
         対象セクター:{context['sec']}
+        期間:{context.get('s_date','-')}〜{context.get('e_date','-')}
+        セクター統計（必ず参照し、過去推移に触れる）:
+        {context.get('sector_stats','')}
         候補データ（必ず比較で使う）:
         {context['candidates']}
-        ニュース（非構造、必ず引用して根拠化）:
+        ニュース（非構造。最低2本は本文で引用し、根拠化）:
         {context.get('news','')}
         Nonce:{context.get('nonce',0)}
 
         厳守ルール:
         - 文体は「だ・である」。です・ます調は禁止。
-        - 各エージェントは最低8行以上。短文禁止。具体で書く。
+        - 抽象語（不透明、堅調、注視、様子見）は禁止。必ず「何が→どう効く→価格/需給にどう反映」を書く。
         - 定量の優先順位は「モメンタム/センチメント＞バリュエーション＞ファンダ」である。
-        - 「抽象語（不透明、堅調、注視、様子見）」は禁止。必ず何が起きるとどう動くかを書く。
+        - 事実追加は禁止。与えた候補データ/セクター統計/ニュースの範囲で推論せよ。
 
         タスク:
-        1) まず冒頭に[SECTOR_OUTLOOK]タグで、セクター全体の見通し（{today_str}から3ヶ月）を宣言抜きで記述。
-        2) その後、各エージェントが、冒頭1文でセクター見通しを述べたうえで、候補を比較し結論を書く。
-        
-        [JUDGE]では、トップピック1銘柄と次点2銘柄を決定し、その論理的根拠を詳細（従来の5倍の分量）に記述せよ。
-        ネガティブな銘柄があれば具体的に指摘せよ。
-        
+        1) 冒頭に[SECTOR_OUTLOOK]で、以下を必ず含めてセクターのこれまでの動向と見通し（今後3ヶ月）を自然文で書け:
+           - 指定期間のセクターの値動き/モメンタムの特徴（加速/減速など）
+           - セクター内の個別銘柄の強弱（上位/下位の特徴を最低2つ言及）
+           - 今後3ヶ月のシナリオ（上昇/下落それぞれ1つ以上の具体要因）
+        2) その後、各エージェントは必ず次の順で書け（改行で区切る）:
+           Sector view: 1〜2文でセクター見通し（[SECTOR_OUTLOOK]と矛盾させない）
+           Stock pick: 候補から1銘柄を推奨（ティッカー/短い結論）
+           Rationale: 定量（RS/Accel/Ret/HighDist/MaxDD等）＋ニュース根拠で説明
+           Risks: 具体的なリスクと否定条件を2つ
+        3) [JUDGE]は「TOP PICK JUDGE」として、最終トップピック1銘柄だけを決める。
+           - ここでは"Sector view:"という見出しは使わない（重複回避）。
+           - 最初に結論（Top pick: <ticker>）を書き、その後に根拠（定量＋ニュース）と否定条件を簡潔にまとめる。
+
         出力フォーマット（タグ厳守）:
         [SECTOR_OUTLOOK] ...
+        [JUDGE] ...
         [FUNDAMENTAL] ...
         [SENTIMENT] ...
         [VALUATION] ...
         [SKEPTIC] ...
         [RISK] ...
-        [JUDGE] ...
         """
     elif prompt_key == "sector_report":
         p = f"""
@@ -1495,6 +1505,16 @@ button{
         "overview": overview, "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
         "earnings_date": ed, "price_action": price_act, "nonce": st.session_state.ai_nonce
     })
+    report_txt = clean_ai_text(report_txt)
+    # Prepend Company Overview and Quantitative Summary (always) to the downloadable analyst note
+    overview_plain = re.sub(r"<[^>]+>", "", overview).strip() if isinstance(overview, str) else ""
+    if not overview_plain:
+        overview_plain = "Sector:- | Industry:- | MCap:- | Summary:-"
+    analyst_note_txt = (
+        "Company Overview\n" + overview_plain + "\n\n"
+        "Quantitative Summary\n" + fund_str + "\n\n"
+        + report_txt
+    )
     report_txt_disp = quality_gate_text(enforce_da_dearu_soft(report_txt), enable=st.session_state.get('qc_on', True))
     
     nc1, nc2 = st.columns([1.5, 1])
@@ -1519,7 +1539,7 @@ button{
             "PEER LOGIC | Nearest Market Cap: |MCap(peer)−MCap(target)|が小さい順に抽出（同一セクター内） | "
             "SOURCE: yfinance.Ticker().info（欠損は'-'）"
         )
-        st.download_button("DOWNLOAD ANALYST NOTE", report_txt, f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        st.download_button("DOWNLOAD ANALYST NOTE", analyst_note_txt, f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
     with nc2:
         st.caption("INTEGRATED NEWS FEED")
@@ -1528,4 +1548,4 @@ button{
             st.markdown(f"- {dt} [{n['src']}] [{n['title']}]({n['link']})")
 
 if __name__ == "__main__":
-        st.download_button("DOWNLOAD ANALYST NOTE", f"Company Overview\n{overview}\n\n{report_txt_disp}", f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    run()
