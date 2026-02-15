@@ -1209,7 +1209,7 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
         ss["tl_cancel_event"] = cancel_event
         ss["tl_job"] = {"mode": "quick", "status": "running", "started_at": time.time()}
         ss["tl_future"] = _executor().submit(build_deliverable_quick_draft, inp=inp, data_dir=data_dir, cancel_event=cancel_event)
-        st.experimental_rerun()
+        _rerun()
 
     if refine:
         cancel_event = threading.Event()
@@ -1217,7 +1217,7 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
         ss["tl_job"] = {"mode": "refine", "status": "running", "started_at": time.time()}
         current_rows = ss.get("tl_rows") or []
         ss["tl_future"] = _executor().submit(refine_with_evidence, inp=inp, data_dir=data_dir, current_rows=current_rows, cancel_event=cancel_event)
-        st.experimental_rerun()
+        _rerun()
 
     # Running job UI
     job = ss.get("tl_job")
@@ -1290,10 +1290,10 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
                 ss["tl_rows"] = None
                 ss["tl_meta"] = res
 
-            st.experimental_rerun()
+            _rerun()
 
         time.sleep(0.6)
-        st.experimental_rerun()
+        _rerun()
 
     # Output area
     meta = ss.get("tl_meta") or {}
