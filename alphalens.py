@@ -608,14 +608,13 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
 
         出力フォーマット（タグ厳守。全体で900〜1400字目安）:
         [SECTOR_OUTLOOK] セクター全体の3ヶ月見通し（3〜5文）
-        [TOP_PICK] トップピック1銘柄の推奨（ティッカー必須）。結論→根拠（モメンタム/ニュース/RS）→想定上昇のドライバー（5〜7文）
-        [FUNDAMENTAL] バリュエーション/収益性の観点でトップ候補を評価（5〜7文）
-        [SENTIMENT] ニュースとモメンタムで上がりやすさを評価（5〜7文。ニュース根拠2本以上）
-        [VALUATION] PER/PBR等が使える場合だけ短く。使えない場合は触れない（3〜5文）
-        [SKEPTIC] 反対意見（何が外れるとダメか）（4〜6文）
-        [RISK] リスクとトリガー（箇条書き3つ）
-        [JUDGE] 合議結論。上のTOP_PICKを前提に、反証を踏まえた最終判断＋3ヶ月の主ドライバー2つ＋次に見るべき指標1つ。
-        """
+        [FUNDAMENTAL] 形式厳守：最初に「Sector view: ...」(1〜2文)→次に「Stock pick: <TICKER> ...」(3〜5文)
+        [SENTIMENT] 形式厳守：Sector view→Stock pick（ニュース根拠2本以上。数値と因果）
+        [VALUATION] 形式厳守：Sector view→Stock pick（PER/PBR等が使える場合のみ。使えない場合は触れない）
+        [SKEPTIC] 形式厳守：Sector view→Stock pick（反対意見。何が外れるとダメか）
+        [RISK] リスクとトリガー（箇条書き3つ。上昇シナリオを壊す要因）
+        [JUDGE] タイトルは本文で「TOP PICK JUDGE」と明記。形式厳守：Sector view→Stock pick（トップピック1銘柄のみ、ティッカー必須）→なぜ他候補ではないか（2点）→次に見るべき指標1つ
+"""
     elif prompt_key == "sector_debate":
         p = f"""
         現在: {today_str}
@@ -721,19 +720,52 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
                 if "429" in str(e): time.sleep(1); continue
     return last_text or "AI OFFLINE"
 
+
+def plot_relative_1y(ticker: str, sector_etf: str, bench: str, market_key: str):
+    """1Y normalized price comparison: stock vs sector ETF vs benchmark."""
+    try:
+        tickers = [t for t in [ticker, sector_etf, bench] if t]
+        df = yf.download(tickers, period="1y", auto_adjust=True, progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df["Close"]
+        if isinstance(df, pd.Series):
+            df = df.to_frame()
+        df = df.dropna(how="all")
+        if df.empty:
+            st.info("Price comparison chart unavailable (no data).")
+            return
+        # keep columns we have
+        cols = [c for c in tickers if c in df.columns]
+        if len(cols) < 2:
+            st.info("Price comparison chart unavailable (insufficient series).")
+            return
+        sdf = df[cols].dropna()
+        if len(sdf) < 10:
+            st.info("Price comparison chart unavailable (insufficient history).")
+            return
+        base = sdf.iloc[0]
+        norm = (sdf / base) * 100.0
+        norm = norm.reset_index().melt(id_vars=[norm.columns[0]], var_name="Series", value_name="Index")
+        # rename date column robustly
+        date_col = norm.columns[0]
+        fig = px.line(norm, x=date_col, y="Index", color="Series", title="1Y Relative Performance (Normalized=100)")
+        fig.update_layout(height=260, margin=dict(l=10,r=10,t=45,b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.info("Price comparison chart unavailable.")
+
 def parse_agent_debate(text: str) -> str:
     """Parse tagged multi-agent debate and render in a fixed, pro layout.
     Always enforce: SECTOR_OUTLOOK -> (agents...) -> JUDGE (styled).
     """
     mapping = {
         "[SECTOR_OUTLOOK]": ("agent-outlook", "SECTOR OUTLOOK"),
-        "[TOP_PICK]": ("agent-toppick", "TOP PICK"),
         "[FUNDAMENTAL]": ("agent-fundamental", "FUNDAMENTAL"),
         "[SENTIMENT]": ("agent-sentiment", "SENTIMENT"),
         "[VALUATION]": ("agent-valuation", "VALUATION"),
         "[SKEPTIC]": ("agent-skeptic", "SKEPTIC"),
         "[RISK]": ("agent-risk", "RISK"),
-        "[JUDGE]": ("agent-verdict", "JUDGE"),
+        "[JUDGE]": ("agent-verdict", "TOP PICK JUDGE"),
     }
     clean = clean_ai_text(text.replace("```html", "").replace("```", ""))
     parts = re.split(r'(\[[A-Z_]+\])', clean)
@@ -754,7 +786,6 @@ def parse_agent_debate(text: str) -> str:
 
     order = [
         "[SECTOR_OUTLOOK]",
-        "[TOP_PICK]",
         "[FUNDAMENTAL]",
         "[SENTIMENT]",
         "[VALUATION]",
@@ -771,17 +802,15 @@ def parse_agent_debate(text: str) -> str:
         content = buckets[tag].strip()
         # compact: remove excessive blank lines
         content = re.sub(r"\n{3,}", "\n\n", content)
+        # emphasize required sub-structure if present
+        content = re.sub(r"(?m)^(Sector view:\s*)", r"<span class='subhead'>\\1</span>", content)
+        content = re.sub(r"(?m)^(Stock pick:\s*)", r"<span class='subhead'>\\1</span>", content)
         content_html = "<div class='agent-content'>" + content.replace("\n", "<br>") + "</div>"
 
         if tag == "[SECTOR_OUTLOOK]":
             html += (
                 f"<div class='{cls}' style='border-left:5px solid #00f2fe; margin-bottom:10px; padding:10px 12px;'>"
                 f"<b>{label}</b><br>{content_html}</div>"
-            )
-        elif tag == "[TOP_PICK]":
-            html += (
-                f"<div class='agent-row {cls}' style='margin-bottom:10px; padding:10px 12px; border-left:5px solid #ff0055; background: rgba(255,0,85,0.04);'>"
-                f"<div class='agent-label' style='color:#ff77aa; font-weight:800;'>{label}</div>{content_html}</div>"
             )
         elif tag == "[JUDGE]":
             # Judge: visually distinct
@@ -893,6 +922,7 @@ div[data-testid="stDataFrame"] *{
 /* Agent Council */
 .agent-row{ display:flex; gap:10px; border:1px solid #222; padding:8px; margin:6px 0; background:#0b0b0b; width:100%; box-sizing:border-box; }
 .agent-label{ flex:0 0 70px; min-width:70px; max-width:70px; font-family:'Orbitron',sans-serif !important; font-size:12px; color:#9adbe2; text-align:right; font-weight:700; word-break:break-word; line-height:1.15; padding-top:2px; }
+.subhead{font-family:'JetBrains Mono',monospace; font-weight:700; color:#00f2fe;}
 .agent-content{ flex:1 1 auto; min-width:0; white-space:pre-wrap; line-height:1.9; overflow-wrap:anywhere; }
 .agent-verdict{ width:100%; box-sizing:border-box; overflow-wrap:anywhere; word-break:break-word; }
 .agent-outlook{ border:1px solid #1d3c41; padding:12px; margin:8px 0; background:#061012; border-left:5px solid #00f2fe; }
@@ -1394,6 +1424,22 @@ button{
         overview = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Summary:{bsum}"
     except Exception:
         overview = ""
+    # --- Company Overview (always visible) ---
+    if overview:
+        st.markdown(f"<div class='note-box'><b>Company Overview</b><br>{overview}</div>", unsafe_allow_html=True)
+    # --- 1Y Relative Performance: Stock vs Sector ETF vs Benchmark ---
+    try:
+        sec_etf = ""
+        try:
+            sel_sec = st.session_state.get("selected_sector")
+            if sel_sec:
+                sec_etf = MARKETS.get(market_key, {}).get("sectors", {}).get(sel_sec, "")
+        except Exception:
+            sec_etf = ""
+        plot_relative_1y(top["Ticker"], sec_etf, bench, market_key)
+    except Exception:
+        pass
+
     ed = fetch_earnings_dates(top["Ticker"]).get("EarningsDate", "-")
     bench_fd = get_fundamental_data(bench)
     
