@@ -32,6 +32,22 @@ import pandas as pd
 import requests
 import streamlit as st
 import yfinance as yf
+# -----------------------------------------------------------------------------
+# Streamlit rerun compatibility
+# -----------------------------------------------------------------------------
+def _rerun() -> None:
+    """Rerun the Streamlit script (compatible across Streamlit versions)."""
+    fn = getattr(st, "rerun", None)
+    if callable(fn):
+        fn()
+        return
+    fn = getattr(st, "experimental_rerun", None)
+    if callable(fn):
+        fn()
+        return
+    # Last resort: stop and ask for a manual refresh
+    st.warning("This Streamlit build does not support programmatic rerun. Please refresh the page.")
+    st.stop()
 
 
 # =============================================================================
