@@ -823,8 +823,8 @@ def parse_agent_debate(text: str) -> str:
         # compact: remove excessive blank lines
         content = re.sub(r"\n{3,}", "\n\n", content)
         # emphasize required sub-structure if present
-        content = re.sub(r"(?m)^(Sector view:\s*)", r"<span class='subhead'>\\1</span>", content)
-        content = re.sub(r"(?m)^(Stock pick:\s*)", r"<span class='subhead'>\\1</span>", content)
+        content = re.sub(r"(?m)^(Sector view:\\s*)", r"<span class=\'subhead\'>\1</span>", content)
+        content = re.sub(r"(?m)^(Stock pick:\\s*)", r"<span class=\'subhead\'>\1</span>", content)
         content_html = "<div class='agent-content'>" + content.replace("\n", "<br>") + "</div>"
 
         if tag == "[SECTOR_OUTLOOK]":
@@ -973,7 +973,7 @@ button{
 </style>
 """, unsafe_allow_html=True)
     
-    st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='brand'>ALPHALENS / THEMELENS</h1>", unsafe_allow_html=True)
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1.0])
@@ -1495,10 +1495,11 @@ button{
         "overview": overview, "fund_str": fund_str, "m_comp": m_comp, "news": news_context,
         "earnings_date": ed, "price_action": price_act, "nonce": st.session_state.ai_nonce
     })
+    report_txt_disp = quality_gate_text(enforce_da_dearu_soft(report_txt), enable=st.session_state.get('qc_on', True))
     
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><div class='mini mono' style='opacity:0.95;margin-top:2px;margin-bottom:6px;'>{overview}</div><br>{report_txt}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><div class='mini mono' style='opacity:0.95;margin-top:2px;margin-bottom:6px;'>{overview}</div><br>{report_txt_disp}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
@@ -1527,4 +1528,4 @@ button{
             st.markdown(f"- {dt} [{n['src']}] [{n['title']}]({n['link']})")
 
 if __name__ == "__main__":
-    main()
+        st.download_button("DOWNLOAD ANALYST NOTE", f"Company Overview\n{overview}\n\n{report_txt_disp}", f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
