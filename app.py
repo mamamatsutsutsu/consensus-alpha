@@ -2,13 +2,6 @@ import time
 import streamlit as st
 import alphalens
 
-# NEXT GEN APP (Theme Portfolio Builder)
-try:
-    from next_gen_app_tab import render_next_gen_tab  # type: ignore
-except Exception:
-    render_next_gen_tab = None  # type: ignore
-
-
 st.set_page_config(page_title="AlphaLens Pro", layout="wide", initial_sidebar_state="collapsed", page_icon="🦅")
 
 def _gate():
@@ -46,6 +39,27 @@ def main():
     if not _gate():
         st.stop()
 
+    # NEXT GEN APP — import after set_page_config & gate
+    from next_gen_app_tab import render_next_gen_tab
+
+    # UI SAFETY: keep top tabs reachable on mobile browsers (safe-area / browser chrome overlap)
+    st.markdown(
+        """
+        <style>
+        :root{ --safe-top: env(safe-area-inset-top, 0px); }
+        /* Enforce comfortable top padding so st.tabs doesn't get hidden under toolbars */
+        div[data-testid="stAppViewContainer"] .block-container{
+            padding-top: calc(5.0rem + var(--safe-top)) !important;
+        }
+        @media (max-width: 768px){
+            div[data-testid="stAppViewContainer"] .block-container{
+                padding-top: calc(5.8rem + var(--safe-top)) !important;
+            }
+        }
+        </style>
+        """ ,
+        unsafe_allow_html=True,
+    )
     t1, t2 = st.tabs(["ALPHALENS", "NEXT GEN APP"])
     with t1:
         try:
@@ -57,17 +71,10 @@ def main():
                 logs = st.session_state.get("system_logs", [])
                 st.text("\n".join(logs[-120:]) if logs else "(empty)")
     with t2:
-        st.markdown("<h1 style='font-family:Orbitron, sans-serif; color:#00f2fe;'>NEXT GEN APP</h1>", unsafe_allow_html=True)
-        st.caption("AI (Gemini)でテーマ投資のユニバース構築・TRR推定・ランキングを行うモジュールです。")
-
-        if render_next_gen_tab is None:
-            st.warning("next_gen_app_tab.py が見つかりません。プロジェクト直下に追加してから再起動してください。")
-        else:
-            try:
-                render_next_gen_tab(data_dir="data")
-            except Exception as e:
-                st.error("NEXT GEN APP error. Details below (also recorded in logs).")
-                st.exception(e)
-
+        try:
+            render_next_gen_tab(data_dir="data")
+        except Exception as e:
+            st.error("NEXT GEN APP error. Details below.")
+            st.exception(e)
 if __name__ == "__main__":
     main()

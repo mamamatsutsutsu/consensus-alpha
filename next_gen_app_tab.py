@@ -63,7 +63,8 @@ ALPHALENS_CSS = """
   --al-text: rgba(255,255,255,0.88);
   --al-muted: rgba(255,255,255,0.70);
 }
-.block-container { padding-top: 1.0rem; padding-bottom: 2.0rem; max-width: 1400px; }
+div[data-testid="stAppViewContainer"] .block-container{ padding-bottom: 2.0rem; max-width: 1400px; }
+/* NOTE: do NOT override padding-top here (keeps Streamlit default so top tabs remain clickable on mobile) */
 .al-hero{
   margin: 4px auto 12px auto;
   padding: 18px 18px;
@@ -129,6 +130,12 @@ ALPHALENS_CSS = """
 }
 .stButton>button{ border-radius: 14px; font-weight: 800; letter-spacing: 0.03em; }
 h2, h3{ font-family: Orbitron, ui-sans-serif, system-ui; letter-spacing: 0.06em; }
+
+/* Tabs safe area (prevents browser chrome overlap on some mobiles) */
+:root{ --safe-top: env(safe-area-inset-top, 0px); }
+@media (max-width: 768px){
+  div[data-testid="stTabs"]{ scroll-margin-top: calc(4.5rem + var(--safe-top)); }
+}
 </style>
 """
 
