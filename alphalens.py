@@ -577,10 +577,7 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         
         必ず次の順番で出力せよ（見出しは固定）：
         1) 【市場概況】（文章で記述。箇条書き禁止。材料→結果を因果で、数値必須。指数名={context.get('index_label','')}を本文に必ず入れる）
-        2) 【主な変動要因】
-           (+) 上昇要因: ...
-           (-) 下落要因: ...
-           (プラスとマイナスをグループ化して記述)
+        2) 【主な変動要因】（文章でよい。上昇要因と下落要因をそれぞれ具体に書く。片方しか無い場合はある方だけでよいが、可能な限り両方を書く。見出し語は「上昇要因:」「下落要因:」を各1回だけ使い、その後は文章で続ける）
         3) 【今後3ヶ月のコンセンサス見通し】
         - 予定日は必ず次の候補日から選んで書け：{slot_line}
         - 90日以内に起きやすい具体イベント/予定を最大6つ列挙（日付も想定せよ）
@@ -591,26 +588,30 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
     elif prompt_key == "sector_debate_fast":
         p = f"""
         現在: {today_str}
-        あなたは5名の専門エージェント。対象市場は{market_n}。
+        あなたは5名の専門エージェントが合議して投資推奨を出す。対象市場は{market_n}。
         対象セクター:{context["sec"]}
         セクター統計:{context.get("sector_stats","")}
-        トップ候補(定量/モメンタム中心):
+        候補（定量/モメンタム中心。TopPick候補の材料）:
         {context.get("top","")}
-        ニュース（必ず根拠に使う。直近優先）:
+        ニュース（直近優先。根拠として最低2本引用）:
         {context.get("news","")}
         Nonce:{context.get("nonce",0)}
 
         厳守:
         - 文体は「だ・である」。自己紹介、承知しました等の前置きは禁止。
-        - 3ヶ月で最も上がる確度が高い1銘柄だけを推奨対象にする。
+        - 3ヶ月で最も上がる確度が高いトップピックは1銘柄のみ。ティッカーを必ず明記。
         - 重視順: 直近ニュース/株価モメンタム(1M/3M/RS) ＞ リスク(最大DD/高値乖離) ＞ バリュエーション。
         - 抽象語（不透明、堅調、注視、様子見）禁止。数値と因果で書く。
+        - 各タグは短くてもよいが「論点の役割」を崩すな。
 
-        出力（タグ固定、全体で600〜900字目安）:
+        出力フォーマット（タグ厳守。全体で900〜1400字目安）:
         [SECTOR_OUTLOOK] セクター全体の3ヶ月見通し（3〜5文）
-        [TOP_PICK] 推奨銘柄（ティッカー含む）と、なぜ今それが上がりやすいか（5〜7文。ニュースを少なくとも2本根拠にする）
-        [RISK_TRIGGERS] 3つ（何が起きると外れるか/下がるか）
-        [JUDGE] 結論を1文で断定（買い/見送り等）、次に見るべき1指標を1つだけ。
+        [FUNDAMENTAL] バリュエーション/収益性の観点でトップ候補を評価（5〜7文）
+        [SENTIMENT] ニュースとモメンタムで上がりやすさを評価（5〜7文。ニュース根拠2本以上）
+        [VALUATION] PER/PBR等が使える場合だけ短く。使えない場合は触れない（3〜5文）
+        [SKEPTIC] 反対意見（何が外れるとダメか）（4〜6文）
+        [RISK] リスクとトリガー（箇条書き3つ）
+        [JUDGE] 合議結論。トップピック1銘柄（ティッカー込み）＋3ヶ月の主ドライバー2つ＋次に見るべき指標1つ。
         """
     elif prompt_key == "sector_debate":
         p = f"""
@@ -894,8 +895,18 @@ button{
         refresh_prices = st.button("REFRESH PRICES", use_container_width=True)
 
     # Reset sector selection when MARKET/WINDOW changes
-    if (st.session_state.last_market_key != market_key) or (st.session_state.last_lookback_key != lookback_key):
+    prev_market = st.session_state.last_market_key
+    prev_window = st.session_state.last_lookback_key
+    market_changed = (prev_market != market_key)
+    window_changed = (prev_window != lookback_key)
+
+    if market_changed or window_changed:
         st.session_state.selected_sector = None
+        # IMPORTANT: Market switch must not reuse previous market's cached data (causes BENCHMARK MISSING / SPY leakage in JP etc.)
+        if market_changed:
+            for k in ["core_df", "sec_df", "sec_stats", "news_cache", "ev_df", "audit"]:
+                if k in st.session_state:
+                    del st.session_state[k]
         st.session_state.last_market_key = market_key
         st.session_state.last_lookback_key = lookback_key
 
@@ -981,9 +992,12 @@ button{
                 res["Sector"] = s_n
                 sec_rows.append(res)
     
-    if not sec_rows: st.warning("SECTOR DATA INSUFFICIENT"); return
-    sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
-    
+    if not sec_rows:
+        st.warning("SECTOR DATA INSUFFICIENT (continuing with degraded view)")
+        sdf = pd.DataFrame()
+    else:
+        sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
+
     # --- Spread robustness: ensure defined in all paths ---
     try:
         spread = float(sdf['RS'].max() - sdf['RS'].min()) if (not sdf.empty and 'RS' in sdf.columns) else 0.0
@@ -1025,17 +1039,23 @@ button{
     <b class='orbitron'>MARKET PULSE ({s_date} - {e_date})</b><br>
     <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='{s_cls}'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br><br>
     """ + market_to_html(force_nonempty_outlook_market(
-        group_plus_minus_blocks(enforce_market_format(enforce_index_naming(generate_ai_content("market", {
+        enforce_market_format(enforce_index_naming(generate_ai_content("market", {
             "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
             "top": sdf.iloc[-1]["Sector"], "bot": sdf.iloc[0]["Sector"],
             "market_name": m_cfg["name"], "headlines": market_context,
             "date_slots": outlook_date_slots(),
             "index_label": index_label,
             "nonce": st.session_state.ai_nonce
-        }), index_label))), regime, b_stats["Ret"], spread, market_key
+        }), index_label)), regime, b_stats["Ret"], spread, market_key
     )) + "</div>", unsafe_allow_html=True)
 
-    # 2. Sector Rotation
+    
+    # If sector data is unavailable, stop after Market Pulse (degraded but stable)
+    if sdf is None or (isinstance(sdf, pd.DataFrame) and sdf.empty):
+        st.info("Sector rotation / sector leaderboard unavailable (insufficient sector ETF history for the selected window). Try REFRESH PRICES or a longer WINDOW.")
+        return
+
+# 2. Sector Rotation
     st.subheader(f"SECTOR ROTATION ({s_date} - {e_date})")
     
     # Sort by Return for Display/Button (Requirement)
@@ -1154,14 +1174,15 @@ button{
 
     sec_ai_raw = generate_ai_content("sector_debate_fast", {
         "sec": target_sector,
-        "sector_stats": sector_stats,
-        "top": top_line,
-        "news": sec_news,
-        "market_name": m_cfg["name"],
-        "nonce": st.session_state.ai_nonce,
+        "market_name": market_n,
+        "sector_stats": sector_stats_str,
+        "top": top3_str,
+        "news": sec_news_str,
+        "nonce": st.session_state.ai_nonce
     })
     sec_ai_txt = clean_ai_text(enforce_da_dearu_soft(sec_ai_raw))
-    st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_txt}</div>", unsafe_allow_html=True)
+    sec_ai_html = parse_agent_debate(sec_ai_txt) if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt) else sec_ai_txt
+    st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
     # Download Council Log (before leaderboard)
     st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_{target_sector}.txt")
 
@@ -1174,11 +1195,18 @@ button{
     
     ev_fund = fetch_fundamentals_batch(top3["Ticker"].tolist()).reset_index()
     ev_df = top3.merge(ev_fund, on="Ticker", how="left")
-    for c in ["PER","PBR"]: ev_df[c] = ev_df[c].apply(lambda x: dash(x))
-    for c in ["ROE","RevGrow","OpMargin"]: ev_df[c] = ev_df[c].apply(pct)
+    for c in ["PER","PBR"]:
+        if c not in ev_df.columns: ev_df[c] = np.nan
+        ev_df[c] = ev_df[c].apply(lambda x: dash(x))
+    for c in ["ROE","RevGrow","OpMargin"]:
+        if c not in ev_df.columns: ev_df[c] = np.nan
+        ev_df[c] = ev_df[c].apply(pct)
+    if "Beta" not in ev_df.columns: ev_df["Beta"] = np.nan
     ev_df["Beta"] = ev_df["Beta"].apply(lambda x: dash(x, "%.2f"))
     
-    st.dataframe(ev_df[["Name","Ticker","Apex","RS","Accel","Ret","1M","3M","HighDist","MaxDD","PER","PBR","ROE","RevGrow","OpMargin","Beta"]], hide_index=True, use_container_width=True)
+    cols = ['Name', 'Ticker', 'Apex', 'RS', 'Accel', 'Ret', '1M', '3M', 'HighDist', 'MaxDD', 'PER', 'PBR', 'ROE', 'RevGrow', 'OpMargin', 'Beta']
+    cols = [c for c in cols if c in ev_df.columns]
+    st.dataframe(ev_df[cols], hide_index=True, use_container_width=True)
 
     # 5. Leaderboard
     universe_cnt = len(stock_list)
