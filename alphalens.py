@@ -816,12 +816,12 @@ def parse_agent_debate(text: str) -> str:
 
     order = [
         "[SECTOR_OUTLOOK]",
+        "[JUDGE]",
         "[FUNDAMENTAL]",
         "[SENTIMENT]",
         "[VALUATION]",
         "[SKEPTIC]",
         "[RISK]",
-        "[JUDGE]",
     ]
 
     html = ""
@@ -830,6 +830,10 @@ def parse_agent_debate(text: str) -> str:
             continue
         cls, label = mapping[tag]
         content = buckets[tag].strip()
+        if tag == "[JUDGE]":
+            # Judge should not show a separate 'Sector view:' block (avoid duplication)
+            content = re.sub(r"(?mi)^Sector view:\s*.*?(\n\s*\n|\n(?=Stock pick:)|\Z)", "", content)
+            content = content.strip()
         # compact: remove excessive blank lines
         content = re.sub(r"\n{3,}", "\n\n", content)
         # emphasize required sub-structure if present
@@ -840,7 +844,7 @@ def parse_agent_debate(text: str) -> str:
         if tag == "[SECTOR_OUTLOOK]":
             html += (
                 f"<div class='{cls}' style='border-left:5px solid #00f2fe; margin-bottom:10px; padding:10px 12px;'>"
-                f"<b>{label}</b><br>{content_html}</div>"
+                f"<span class='orbitron' style='letter-spacing:0.8px; font-weight:900;'>{label}</span><br>{content_html}</div>"
             )
         elif tag == "[JUDGE]":
             # Judge: visually distinct
@@ -983,7 +987,7 @@ button{
 </style>
 """, unsafe_allow_html=True)
     
-    st.markdown("<h1 class='brand'>ALPHALENS / THEMELENS</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1.0])
@@ -1510,6 +1514,8 @@ button{
     overview_plain = re.sub(r"<[^>]+>", "", overview).strip() if isinstance(overview, str) else ""
     if not overview_plain:
         overview_plain = "Sector:- | Industry:- | MCap:- | Summary:-"
+    # --- Company Overview (always shown above the report as well) ---
+    st.markdown("**Company Overview**  \n" + overview_plain)
     analyst_note_txt = (
         "Company Overview\n" + overview_plain + "\n\n"
         "Quantitative Summary\n" + fund_str + "\n\n"
@@ -1519,7 +1525,7 @@ button{
     
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><div class='mini mono' style='opacity:0.95;margin-top:2px;margin-bottom:6px;'>{overview}</div><br>{report_txt_disp}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_txt_disp}</div>", unsafe_allow_html=True)
 
         # Links
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
