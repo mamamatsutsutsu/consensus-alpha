@@ -318,6 +318,58 @@ def enforce_market_format(text: str) -> str:
     text = re.sub(r"\n\s*\n(【今後3ヶ月[^】]*】)", r"\n\1", text)
     return text.strip()
 
+def enforce_index_naming(text: str, index_label: str) -> str:
+    if not index_label:
+        return text
+    text = text.replace("市場平均", index_label)
+    return text
+
+def group_plus_minus_blocks(text: str) -> str:
+    lines = text.splitlines()
+    out = []
+    in_factors = False
+    plus, minus = [], []
+    def flush():
+        nonlocal plus, minus
+        if plus:
+            out.append("(+) 上昇要因:")
+            out.extend(plus)
+        if minus:
+            out.append("(-) 下落要因:")
+            out.extend(minus)
+        plus, minus = [], []
+    for ln in lines:
+        if "【主な変動要因】" in ln:
+            in_factors = True
+            out.append("【主な変動要因】")
+            continue
+        if in_factors and re.match(r"^【.+】", ln):
+            flush()
+            in_factors = False
+            out.append(ln)
+            continue
+        if in_factors:
+            s = ln.strip()
+            if not s:
+                continue
+            if s.startswith("(+)") or s.startswith("(＋)") or s.startswith("+") or s.startswith("＋"):
+                plus.append("・" + re.sub(r"^[\(\[]?[＋\+]\)?\s*", "", s).lstrip("・"))
+            elif s.startswith("(-)") or s.startswith("(−)") or s.startswith("-") or s.startswith("−"):
+                minus.append("・" + re.sub(r"^[\(\[]?[−\-]\)?\s*", "", s).lstrip("・"))
+            else:
+                if any(k in s for k in ["上昇","好感","増益","上方","買い","強い","反発","期待"]):
+                    plus.append("・" + s.lstrip("・"))
+                elif any(k in s for k in ["下落","嫌気","減益","下方","売り","弱い","反落","懸念"]):
+                    minus.append("・" + s.lstrip("・"))
+                else:
+                    plus.append("・" + s.lstrip("・"))
+        else:
+            out.append(ln)
+    if in_factors:
+        flush()
+    return "\n".join(out).strip()
+
+
 def enforce_da_dearu_soft(text: str) -> str:
     text = re.sub(r"です。", "だ。", text)
     text = re.sub(r"です$", "だ", text, flags=re.MULTILINE)
@@ -758,10 +810,25 @@ button{
     if not sec_rows: st.warning("SECTOR DATA INSUFFICIENT"); return
     sdf = pd.DataFrame(sec_rows).sort_values("RS", ascending=True)
     
+
+    # Market rotation spread (RS max-min)
+    try:
+        spread = float(sdf["RS"].max() - sdf["RS"].min())
+    except Exception:
+        spread = 0.0
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
     _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
     
+
+    # News sentiment summary
+    try:
+        s_score = int(max(-10, min(10, m_sent)))
+    except Exception:
+        s_score = 0
+    lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
+    hit_pos = int(m_meta.get("pos", 0)) if isinstance(m_meta, dict) else 0
+    hit_neg = int(m_meta.get("neg", 0)) if isinstance(m_meta, dict) else 0
     # Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
     index_name = get_name(bench)
     index_label = f"{index_name} ({bench})" if index_name else bench
