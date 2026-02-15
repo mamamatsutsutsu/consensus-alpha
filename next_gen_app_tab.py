@@ -1,20 +1,22 @@
-# THEMELENS — AI-first Theme Portfolio Builder (Gemini) v14
+# THEMELENS — AI-first Theme Portfolio Builder (Gemini) v15
 # -----------------------------------------------------------------------------
-# Fixes:
-# - ALWAYS SHOW something when AI returns (even if JSON is broken).
-#   * We keep & display the raw model output (in an expander)
-#   * We try JSON parse; if it fails, we extract tickers from raw text and still show a list.
-# - Make draft parsing resilient:
-#   * approx_market_cap_usd may come as "2.1T", "$450B", "1,200,000,000,000" -> robust parser
-#   * TRR may come as "60%" -> robust parser
-# - UI: If draft_rows exists but is empty, still display raw output + a placeholder.
+# Fix focus: "No structured rows" even though AI returned something.
 #
-# Workflow (stepwise & bounded):
-#  1) Draft Universe (N+20): AI returns rows with TRR + approx mktcap (USD) -> immediate list
-#  2) Validate & Rank (optional, bounded): yfinance month-end proxy mktcap replaces AI estimates if available
-#  3) Refine (optional): add TRR evidence sources
+# Changes vs v14:
+# 1) Prompt-side: keep schema, but
+# 2) Parser-side: accept common key variants (rows/companies/items/data/tickers) so JSON "shape drift" won't break display.
+# 3) Fallback: if parse fails AND no tickers extracted, perform a 2nd Gemini call in TEXT mode requesting tickers only.
+# 4) Cache: never cache empty/rowless results; also cache raw text inside payload for debug.
 #
-# Deliverable: Ranked list by Theme Market Cap = Market Cap × TRR
+# Result: if Gemini returns ANYTHING, we will display:
+# - structured rows if possible, else
+# - extracted tickers list, else
+# - raw output + explicit error.
+#
+# Workflow:
+#  Draft (N+20, fast) -> Validate & Rank (optional, bounded) -> Refine (optional)
+#
+# Deliverable: ranked list by Theme Market Cap = Market Cap × TRR.
 
 from __future__ import annotations
 
@@ -51,7 +53,7 @@ def _rerun() -> None:
 
 
 # =============================================================================
-# Styling — AlphaLens-like + high-visibility controls
+# Styling
 # =============================================================================
 THEMELENS_CSS = """
 <style>
@@ -227,21 +229,16 @@ def _large_cap_threshold_usd(region: RegionMode) -> float:
 
 
 def draft_pool_size(top_n: int) -> int:
-    # User-requested: N + 20 (capped)
     n = max(1, min(int(top_n), 30))
-    return int(min(80, n + 20))  # allow a bit more buffer; still bounded
+    return int(min(80, n + 20))
 
 
 # =============================================================================
-# Robust parsers (prevent "list not displayed" due to ValueError)
+# Robust parsers
 # =============================================================================
 _NUM_SUFFIX = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
 
 def parse_usd_number(v: Any) -> float:
-    """
-    Accepts: 1200000000, "1,200,000,000", "$450B", "2.1T", "USD 15.3B"
-    Returns float USD value, or 0.0 if unknown.
-    """
     if v is None:
         return 0.0
     if isinstance(v, (int, float)) and not (isinstance(v, float) and np.isnan(v)):
@@ -252,23 +249,18 @@ def parse_usd_number(v: Any) -> float:
     s = str(v).strip()
     if not s:
         return 0.0
-    # remove currency tokens
     s = s.replace("USD", "").replace("US$", "").replace("$", "").replace(" ", "")
-    # commas
     s = s.replace(",", "")
-    # suffix
     m = re.match(r"^([0-9]*\.?[0-9]+)([KMBT])?$", s, flags=re.IGNORECASE)
     if m:
         num = float(m.group(1))
         suf = (m.group(2) or "").upper()
         return num * _NUM_SUFFIX.get(suf, 1.0)
-    # try extract first numeric with suffix
     m2 = re.search(r"([0-9]*\.?[0-9]+)\s*([KMBT])", s, flags=re.IGNORECASE)
     if m2:
         num = float(m2.group(1))
         suf = m2.group(2).upper()
         return num * _NUM_SUFFIX.get(suf, 1.0)
-    # last resort: extract float
     m3 = re.search(r"([0-9]*\.?[0-9]+)", s)
     if m3:
         try:
@@ -279,10 +271,6 @@ def parse_usd_number(v: Any) -> float:
 
 
 def parse_trr(v: Any) -> float:
-    """
-    Accepts: 0.6, "0.6", "60%", "60 %"
-    Returns 0-1.
-    """
     if v is None:
         return 0.0
     if isinstance(v, (int, float)) and not (isinstance(v, float) and np.isnan(v)):
@@ -296,13 +284,11 @@ def parse_trr(v: Any) -> float:
             return clamp01(float(s[:-1]) / 100.0)
         except Exception:
             return 0.0
-    # extract number
     m = re.search(r"([0-9]*\.?[0-9]+)", s)
     if not m:
         return 0.0
     try:
         x = float(m.group(1))
-        # if "60" without %, treat as percent if > 1.5
         if x > 1.5:
             x = x / 100.0
         return clamp01(x)
@@ -311,27 +297,14 @@ def parse_trr(v: Any) -> float:
 
 
 def extract_tickers_from_text(raw: str, max_n: int = 80) -> List[str]:
-    """
-    Best-effort ticker extraction from messy model output.
-    Priority: dot-tickers (0700.HK) and (NVDA) style.
-    """
     raw = raw or ""
-    # capture with positions to preserve order
     candidates: List[Tuple[int, str]] = []
-
-    # dot tickers
     for m in re.finditer(r"\b[0-9A-Z]{1,10}\.[A-Z]{1,6}\b", raw):
         candidates.append((m.start(), m.group(0).upper()))
-
-    # (NVDA) style
     for m in re.finditer(r"\(([A-Z]{1,5})\)", raw):
         candidates.append((m.start(), m.group(1).upper()))
-
-    # bullet lines: "- NVDA"
     for m in re.finditer(r"(?m)^\s*(?:-|\*|\d+\.)\s*([A-Z]{2,5})\b", raw):
         candidates.append((m.start(), m.group(1).upper()))
-
-    # de-dup in order, filter obvious stopwords
     stop = {"THE","AND","FOR","WITH","FROM","THIS","THAT","WILL","ARE","INC","LTD","PLC","CO","ETF","USD","TRR","TOP","RANK"}
     out: List[str] = []
     seen = set()
@@ -346,7 +319,7 @@ def extract_tickers_from_text(raw: str, max_n: int = 80) -> List[str]:
 
 
 # =============================================================================
-# Disk cache (AI)
+# Disk cache
 # =============================================================================
 def _ai_cache_dir(data_dir: str) -> Path:
     p = Path(data_dir) / "ai_cache"
@@ -385,8 +358,101 @@ def _cache_save(data_dir: str, key: str, payload: Dict[str, Any]) -> None:
 
 
 # =============================================================================
-# Gemini — get RAW text (then we parse; if parsing fails we still display raw)
+# Gemini — get RAW text (we always keep raw)
 # =============================================================================
+def _compose_prompt(messages: List[Dict[str, str]]) -> Tuple[str, str]:
+    system_txt = ""
+    user_parts: List[str] = []
+    for m in messages:
+        role = (m.get("role") or "").lower().strip()
+        content = str(m.get("content") or "")
+        if role == "system" and not system_txt:
+            system_txt = content
+        elif role == "user":
+            user_parts.append(content)
+    return system_txt, "\n\n".join([p for p in user_parts if p]).strip()
+
+
+def gemini_generate_raw_text(
+    *,
+    messages: List[Dict[str, str]],
+    model: str,
+    temperature: float,
+    max_output_tokens: int,
+    timeout_s: int,
+    response_mime_type: str = "application/json",
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Returns (text, debug_meta). debug_meta may contain promptFeedback if candidates were empty.
+    """
+    system_txt, user_txt = _compose_prompt(messages)
+    if not user_txt:
+        raise RuntimeError("Gemini call: missing user prompt.")
+    api_key = _get_secret("GEMINI_API_KEY") or _get_secret("GOOGLE_API_KEY")
+
+    debug: Dict[str, Any] = {}
+    if api_key:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        payload: Dict[str, Any] = {
+            "contents": [{"role": "user", "parts": [{"text": user_txt}]}],
+            "generationConfig": {
+                "temperature": float(temperature),
+                "maxOutputTokens": int(max_output_tokens),
+                "responseMimeType": response_mime_type,
+            },
+        }
+        if system_txt:
+            payload["systemInstruction"] = {"role": "system", "parts": [{"text": system_txt}]}
+
+        r = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=int(timeout_s))
+        r.raise_for_status()
+        data = r.json()
+        debug["promptFeedback"] = data.get("promptFeedback")
+        txt = ""
+        candidates = data.get("candidates") or []
+        if not candidates:
+            debug["no_candidates"] = True
+            return "", debug
+        cand0 = candidates[0]
+        debug["finishReason"] = cand0.get("finishReason")
+        content = (cand0.get("content") or {})
+        parts = (content.get("parts") or [])
+        if parts:
+            # support both "text" and possible "inlineData"
+            chunks = []
+            for p in parts:
+                if not isinstance(p, dict):
+                    continue
+                if "text" in p:
+                    chunks.append(str(p.get("text","") or ""))
+                elif "inlineData" in p:
+                    # rarely used; keep as json dump
+                    chunks.append(json.dumps(p.get("inlineData"), ensure_ascii=False))
+                elif "functionCall" in p:
+                    chunks.append(json.dumps(p.get("functionCall"), ensure_ascii=False))
+            txt = "\n".join(chunks)
+        return str(txt or ""), debug
+
+    # SDK fallback (Vertex/ADC)
+    try:
+        from google.genai import types  # type: ignore
+        from google import genai  # type: ignore
+        client = genai.Client()
+        cfg = types.GenerateContentConfig(
+            temperature=float(temperature),
+            system_instruction=system_txt or None,
+            response_mime_type=response_mime_type,
+            max_output_tokens=int(max_output_tokens),
+        )
+        resp = client.models.generate_content(model=model, contents=user_txt, config=cfg)
+        txt = getattr(resp, "text", "") or ""
+        if callable(txt):
+            txt = txt()
+        return str(txt or ""), debug
+    except Exception as e:
+        raise RuntimeError(f"Gemini call failed. Configure GEMINI_API_KEY/GOOGLE_API_KEY. Error: {e}")
+
+
 def _strip_code_fences(s: str) -> str:
     s = (s or "").strip()
     if s.startswith("```"):
@@ -420,87 +486,10 @@ def _parse_json_any(txt: str) -> Any:
     raise ValueError("No JSON object/array found.")
 
 
-def _compose_prompt(messages: List[Dict[str, str]]) -> Tuple[str, str]:
-    system_txt = ""
-    user_parts: List[str] = []
-    for m in messages:
-        role = (m.get("role") or "").lower().strip()
-        content = str(m.get("content") or "")
-        if role == "system" and not system_txt:
-            system_txt = content
-        elif role == "user":
-            user_parts.append(content)
-    user_txt = "\n\n".join([p for p in user_parts if p]).strip()
-    return system_txt, user_txt
-
-
-def gemini_generate_raw_text(
-    *,
-    messages: List[Dict[str, str]],
-    model: str,
-    temperature: float,
-    max_output_tokens: int,
-    timeout_s: int,
-) -> str:
-    system_txt, user_txt = _compose_prompt(messages)
-    if not user_txt:
-        raise RuntimeError("Gemini call: missing user prompt.")
-
-    api_key = _get_secret("GEMINI_API_KEY") or _get_secret("GOOGLE_API_KEY")
-
-    # REST-first (timeout reliable)
-    if api_key:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        payload: Dict[str, Any] = {
-            "contents": [{"role": "user", "parts": [{"text": user_txt}]}],
-            "generationConfig": {
-                "temperature": float(temperature),
-                "maxOutputTokens": int(max_output_tokens),
-                "responseMimeType": "application/json",
-            },
-        }
-        if system_txt:
-            payload["systemInstruction"] = {"role": "system", "parts": [{"text": system_txt}]}
-
-        r = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=int(timeout_s))
-        r.raise_for_status()
-        data = r.json()
-        txt = ""
-        try:
-            cand0 = (data.get("candidates") or [])[0]
-            content = (cand0.get("content") or {})
-            parts = (content.get("parts") or [])
-            if parts:
-                txt = "\n".join([str(p.get("text","") or "") for p in parts if isinstance(p, dict)])
-        except Exception:
-            txt = ""
-        return str(txt or "")
-
-    # SDK fallback (Vertex/ADC)
-    try:
-        from google.genai import types  # type: ignore
-        from google import genai  # type: ignore
-        client = genai.Client()
-        cfg = types.GenerateContentConfig(
-            temperature=float(temperature),
-            system_instruction=system_txt or None,
-            response_mime_type="application/json",
-            max_output_tokens=int(max_output_tokens),
-        )
-        resp = client.models.generate_content(model=model, contents=user_txt, config=cfg)
-        txt = getattr(resp, "text", "") or ""
-        if callable(txt):
-            txt = txt()
-        return str(txt or "")
-    except Exception as e:
-        raise RuntimeError(f"Gemini call failed. Configure GEMINI_API_KEY/GOOGLE_API_KEY. Error: {e}")
-
-
 def _ai_system_prompt() -> str:
     return (
         "You are a senior global equity portfolio manager and sector analyst. "
         "Return ONLY valid JSON. No markdown. "
-        "Never invent URLs or quotes. "
         "If uncertain, set method='estimated' confidence='Low'."
     )
 
@@ -510,7 +499,6 @@ def _ai_system_prompt() -> str:
 # =============================================================================
 def build_messages_draft_universe(theme: str, region: RegionMode, asof: date, pool: int) -> List[Dict[str, str]]:
     region_def = _region_definition(region)
-
     schema = {
         "status": "ok|ambiguous|error",
         "theme_definition": "string",
@@ -531,48 +519,73 @@ def build_messages_draft_universe(theme: str, region: RegionMode, asof: date, po
             }
         ],
     }
+    # Provide a tiny example to reduce shape drift
+    example = {
+        "status": "ok",
+        "theme_definition": "Semiconductors: chips, design, manufacturing, equipment, materials, EDA",
+        "notes": "Large-cap only; tickers are yfinance-compatible.",
+        "reference_etfs": ["SOXX", "SMH"],
+        "rows": [
+            {"rank_hint": 1, "company_name": "NVIDIA", "ticker": "NVDA", "listed_country": "United States", "primary_exchange": "NASDAQ",
+             "subtheme_bucket": "GPU/AI", "approx_market_cap_usd": 1200000000000, "theme_revenue_ratio": 0.95, "method": "estimated", "confidence": "Med"}
+        ]
+    }
 
     user_prompt = f"""
-Task: Draft a candidate universe for a theme portfolio.
+Return ONLY JSON.
 
-Inputs:
-- Theme: "{theme}"
-- Region: {region}
-- Region definition: {region_def}
-- Candidate count to return: {pool}
-- As-of date for market cap approximation: {asof.isoformat()} (month-end)
+Theme: "{theme}"
+Region: {region} (definition: {region_def})
+Candidate count: {pool}
+As-of market cap (month-end): {asof.isoformat()}
 
-Requirements (VERY IMPORTANT):
-- Focus on LARGE-CAP, highly liquid public equities typical of major indices.
-- The list must be complete for likely top "Theme Market Cap" leaders.
-- Provide yfinance-compatible tickers WITH suffixes when needed:
-  examples: 0700.HK, 005930.KS, 2330.TW, 8035.T, NESN.SW, ASML.AS, HSBA.L
-- approx_market_cap_usd: rough month-end market cap estimate in USD (number). Do NOT leave null.
-- theme_revenue_ratio (TRR): estimate 0-1 (theme revenue / total revenue). You may output as a number or percent string.
-- subtheme_bucket: e.g. "Foundry", "IDM", "Equipment", "EDA", "Memory", "Analog", "Materials", "Packaging", etc.
-- If theme is ambiguous / not investable, return status="ambiguous" with theme_definition and 3-8 reference_etfs; rows=[].
+Rules:
+- LARGE-CAP, index-sized companies only.
+- Provide yfinance tickers with suffixes when needed (0700.HK, ASML.AS, NESN.SW, 9984.T, HSBA.L).
+- "rows" MUST be an array with exactly {pool} entries (unless ambiguous).
+- approx_market_cap_usd: USD number (can be rough).
+- theme_revenue_ratio (TRR): 0-1 (or percent string like "60%").
 
-Output:
-Return ONLY JSON in this schema:
+If ambiguous/not investable: status="ambiguous", rows=[] and include reference_etfs.
+
+Schema:
 {json.dumps(schema, ensure_ascii=False)}
+
+Example (shape only):
+{json.dumps(example, ensure_ascii=False)}
 """.strip()
 
     return [{"role": "system", "content": _ai_system_prompt()},
             {"role": "user", "content": user_prompt}]
 
 
+def build_messages_tickers_only(theme: str, region: RegionMode, pool: int) -> List[Dict[str, str]]:
+    region_def = _region_definition(region)
+    user_prompt = f"""
+Return ONLY tickers (no JSON), one ticker per line.
+
+Theme: "{theme}"
+Region: {region} (definition: {region_def})
+Need: {pool} LARGE-CAP yfinance-compatible tickers, sorted by likely Theme Market Cap (desc).
+No explanations, no bullets, no numbering. Just tickers.
+""".strip()
+    return [{"role": "system", "content": "Return only plain text tickers."},
+            {"role": "user", "content": user_prompt}]
+
+
 def build_messages_summaries(theme: str, tickers: List[str]) -> List[Dict[str, str]]:
     schema = {"status": "ok|error", "rows": [{"ticker": "string", "theme_ja": "string", "non_theme_ja": "string"}]}
     user_prompt = f"""
-Task: Write short Japanese summaries (institutional tone). No disclaimers.
+Return ONLY JSON.
+
+Task: Write short Japanese summaries (institutional tone).
 Theme: "{theme}"
 Tickers: {json.dumps(tickers, ensure_ascii=False)}
 
 Constraints:
 - theme_ja: 1 sentence, <= 120 Japanese characters
 - non_theme_ja: 1 sentence, <= 90 Japanese characters
-
-Return ONLY JSON:
+Schema:
 {json.dumps(schema, ensure_ascii=False)}
 """.strip()
     return [{"role": "system", "content": _ai_system_prompt()},
@@ -598,75 +611,115 @@ def build_messages_refine_evidence(theme: str, region: RegionMode, asof: date, p
             }
         ],
     }
-
     user_prompt = f"""
-Task: REFINE (Top-N only). Add TRR evidence metadata and improve summaries.
+Return ONLY JSON.
 
+Task: REFINE (Top-N only). Add TRR evidence metadata and improve summaries.
 Theme: "{theme}"
 Region: {region} (definition: {region_def})
-As-of (market cap): {asof.isoformat()}
-Top-N payload:
+As-of: {asof.isoformat()}
+Payload:
 {json.dumps(payload, ensure_ascii=False)}
 
 Rules:
 - NEVER invent URLs or quotes.
 - If you cannot provide a verified URL+exact excerpt, set url=null and excerpt="" and keep method="estimated" confidence="Low".
-- Prefer filings/annual report/IR decks. Provide up to 2 sources per company.
+- Prefer filings/annual report/IR decks. Up to 2 sources per company.
 
-Return ONLY JSON:
+Schema:
 {json.dumps(schema, ensure_ascii=False)}
 """.strip()
-
     return [{"role": "system", "content": _ai_system_prompt()},
             {"role": "user", "content": user_prompt}]
 
 
 # =============================================================================
-# Normalizers (never raise)
+# Normalizers (accept key drift)
 # =============================================================================
+def _get_list_any(obj: Dict[str, Any], keys: List[str]) -> Any:
+    for k in keys:
+        if k in obj:
+            return obj.get(k)
+    return None
+
+
 def normalize_draft_from_obj(obj: Any) -> Dict[str, Any]:
+    """
+    Accepts:
+    - {"rows":[{...}, ...]}
+    - {"companies":[{...}, ...]}
+    - {"items":[...]} or {"data":[...]}
+    - {"tickers":[...]}  (list of strings)
+    """
     if not isinstance(obj, dict):
         return {"status": "error", "rows": [], "notes": "LLM output not a JSON object."}
-    status = str(obj.get("status","error"))
+
+    status = str(obj.get("status", "ok"))
     if status not in ("ok","ambiguous","error"):
-        status = "error"
-    rows = obj.get("rows", []) or []
-    if not isinstance(rows, list):
-        rows = []
-    out = []
-    for r in rows:
+        status = "ok"
+
+    theme_def = str(obj.get("theme_definition","") or "")
+    notes = str(obj.get("notes","") or "")
+    ref_etfs = obj.get("reference_etfs", []) if isinstance(obj.get("reference_etfs", []), list) else []
+
+    raw_rows = _get_list_any(obj, ["rows","companies","items","data","results"])
+    if raw_rows is None:
+        raw_rows = _get_list_any(obj, ["tickers","symbols"])
+
+    rows: List[Dict[str, Any]] = []
+
+    # If list of strings -> tickers
+    if isinstance(raw_rows, list) and raw_rows and all(isinstance(x, str) for x in raw_rows):
+        for i, t in enumerate(raw_rows):
+            t2 = str(t).strip().upper()
+            if not t2:
+                continue
+            rows.append({
+                "rank_hint": i + 1,
+                "company_name": "",
+                "ticker": t2,
+                "listed_country": "",
+                "primary_exchange": "",
+                "subtheme_bucket": "",
+                "approx_market_cap_usd": 0.0,
+                "theme_revenue_ratio": 0.0,
+                "theme_revenue_ratio_method": "estimated",
+                "theme_revenue_ratio_confidence": "Low",
+            })
+        return {"status": status, "theme_definition": theme_def, "notes": notes, "reference_etfs": ref_etfs, "rows": rows}
+
+    if not isinstance(raw_rows, list):
+        raw_rows = []
+
+    for r in raw_rows:
         if not isinstance(r, dict):
             continue
-        t = str(r.get("ticker","") or "").strip().upper()
+        t = str(r.get("ticker", r.get("symbol","")) or "").strip().upper()
         if not t:
             continue
-        out.append({
-            "rank_hint": int(r.get("rank_hint", len(out)+1) or (len(out)+1)),
-            "company_name": str(r.get("company_name","") or "").strip(),
+        rows.append({
+            "rank_hint": int(r.get("rank_hint", len(rows)+1) or (len(rows)+1)),
+            "company_name": str(r.get("company_name", r.get("name","")) or "").strip(),
             "ticker": t,
-            "listed_country": str(r.get("listed_country","") or "").strip(),
-            "primary_exchange": str(r.get("primary_exchange","") or "").strip(),
-            "subtheme_bucket": str(r.get("subtheme_bucket","") or "").strip(),
-            "approx_market_cap_usd": parse_usd_number(r.get("approx_market_cap_usd", 0.0)),
-            "theme_revenue_ratio": parse_trr(r.get("theme_revenue_ratio", 0.0)),
+            "listed_country": str(r.get("listed_country", r.get("country","")) or "").strip(),
+            "primary_exchange": str(r.get("primary_exchange", r.get("exchange","")) or "").strip(),
+            "subtheme_bucket": str(r.get("subtheme_bucket", r.get("subtheme","")) or "").strip(),
+            "approx_market_cap_usd": parse_usd_number(r.get("approx_market_cap_usd", r.get("market_cap_usd", 0.0))),
+            "theme_revenue_ratio": parse_trr(r.get("theme_revenue_ratio", r.get("trr", 0.0))),
             "theme_revenue_ratio_method": str(r.get("method","estimated") or "estimated"),
             "theme_revenue_ratio_confidence": str(r.get("confidence","Low") or "Low"),
         })
+
     # de-dup by ticker
     seen = set()
     dedup = []
-    for r in out:
+    for r in rows:
         if r["ticker"] in seen:
             continue
         seen.add(r["ticker"])
         dedup.append(r)
-    return {
-        "status": status,
-        "theme_definition": str(obj.get("theme_definition","") or ""),
-        "notes": str(obj.get("notes","") or ""),
-        "reference_etfs": obj.get("reference_etfs", []) if isinstance(obj.get("reference_etfs", []), list) else [],
-        "rows": dedup,
-    }
+
+    return {"status": status, "theme_definition": theme_def, "notes": notes, "reference_etfs": ref_etfs, "rows": dedup}
 
 
 def normalize_summaries(obj: Any) -> Dict[str, Dict[str, str]]:
@@ -682,10 +735,7 @@ def normalize_summaries(obj: Any) -> Dict[str, Dict[str, str]]:
         t = str(r.get("ticker","") or "").strip().upper()
         if not t:
             continue
-        out[t] = {
-            "theme_ja": str(r.get("theme_ja","") or "").strip(),
-            "non_theme_ja": str(r.get("non_theme_ja","") or "").strip(),
-        }
+        out[t] = {"theme_ja": str(r.get("theme_ja","") or "").strip(), "non_theme_ja": str(r.get("non_theme_ja","") or "").strip()}
     return out
 
 
@@ -816,10 +866,6 @@ def _month_end_close_chunked(tickers: List[str], asof: date, chunk: int = 15) ->
 
 
 def compute_mktcap_asof_usd_bounded(tickers: List[str], asof: date, timeout_total_s: int = 12) -> pd.DataFrame:
-    """
-    Try to compute month-end market cap proxy for tickers, but never block longer than timeout_total_s.
-    If it times out, return an empty DataFrame.
-    """
     tickers = [str(t).strip().upper() for t in tickers if t and str(t).strip()]
     tickers = list(dict.fromkeys(tickers))
     if not tickers:
@@ -867,7 +913,6 @@ def compute_mktcap_asof_usd_bounded(tickers: List[str], asof: date, timeout_tota
 
             fx = fx_map.get(ccy)
             mcap_usd = (float(mcap_local) * float(fx)) if (mcap_local is not None and fx is not None) else None
-
             rows.append({"ticker": t, "mcap_usd": mcap_usd, "mcap_quality": quality + ("" if fx is not None else "|fx_unavailable")})
 
         df = pd.DataFrame(rows)
@@ -899,98 +944,134 @@ def job_draft_universe(*, inp: ThemeInput, data_dir: str, cancel_event: threadin
     top_n = max(1, min(int(inp.top_n), 30))
     pool = draft_pool_size(top_n)
     asof = most_recent_month_end(date.today())
-
     model = _get_secret("GEMINI_MODEL") or "gemini-2.5-flash"
-    cache_key = _cache_key("draft_v14", theme, region, asof.isoformat(), str(pool), model)
+    cache_key = _cache_key("draft_v15", theme, region, asof.isoformat(), str(pool), model)
 
-    # Try cache first (parsed JSON only)
+    # Load cache if it has rows
     cached = _cache_load(data_dir, cache_key)
-    raw_text: str = ""
-    if cached:
-        obj = cached
-    else:
+    raw_text = ""
+    debug_meta: Dict[str, Any] = {}
+
+    if isinstance(cached, dict):
+        raw_text = str(cached.get("_raw_text","") or "")
+        try:
+            norm = normalize_draft_from_obj(cached)
+            if norm.get("rows"):
+                # ok cached
+                pass
+            else:
+                cached = None
+        except Exception:
+            cached = None
+
+    obj = cached
+    if obj is None:
         msgs = build_messages_draft_universe(theme, region, asof, pool)
-        raw_text = gemini_generate_raw_text(
+        raw_text, debug_meta = gemini_generate_raw_text(
             messages=msgs,
             model=model,
             temperature=0.05,
-            max_output_tokens=1900,
+            max_output_tokens=1700,
             timeout_s=14,
+            response_mime_type="application/json",
         )
-        # Try parse
-        obj = None
+        # Parse JSON if possible
+        parsed_obj: Optional[Dict[str, Any]] = None
         try:
             parsed = _parse_json_any(raw_text)
             if isinstance(parsed, dict):
-                obj = parsed
+                parsed_obj = parsed
             else:
-                obj = {"status": "ok", "rows": parsed}
+                parsed_obj = {"status": "ok", "rows": parsed}
         except Exception:
-            obj = None
+            parsed_obj = None
 
-        # Cache only if parsed as dict
-        if isinstance(obj, dict):
-            _cache_save(data_dir, cache_key, obj)
-
-    # Normalize if possible
-    notes = ""
-    theme_def = ""
-    ref_etfs: List[str] = []
-    rows: List[Dict[str, Any]] = []
-
-    if isinstance(obj, dict):
-        norm = normalize_draft_from_obj(obj)
-        status = norm.get("status","error")
-        notes = str(norm.get("notes","") or "")
-        theme_def = str(norm.get("theme_definition","") or "")
-        ref_etfs = norm.get("reference_etfs", []) or []
-        rows = norm.get("rows", []) or []
-        if status == "ambiguous":
-            return {
-                "status": "ambiguous",
-                "asof": asof.isoformat(),
-                "theme_definition": theme_def,
-                "reference_etfs": ref_etfs,
-                "notes": notes,
-                "ai_raw_text": raw_text,
-            }
-    else:
-        status = "error"
-
-    # If no structured rows, fallback to ticker extraction from raw text
-    if not rows:
-        fallback_tickers = extract_tickers_from_text(raw_text, max_n=pool)
-        if fallback_tickers:
-            notes = (notes + " " if notes else "") + "Fallback: extracted tickers from raw AI output (non-JSON)."
+        if isinstance(parsed_obj, dict):
+            # store raw in payload for debug
+            parsed_obj["_raw_text"] = raw_text
+            parsed_obj["_debug_meta"] = debug_meta
+            # cache only if it has some rows/tickers-ish
+            n = len(normalize_draft_from_obj(parsed_obj).get("rows", []))
+            if n > 0:
+                _cache_save(data_dir, cache_key, parsed_obj)
+            obj = parsed_obj
         else:
-            notes = (notes + " " if notes else "") + "Fallback: could not parse JSON; showing raw AI output."
-        rows = []
-        for i, t in enumerate(fallback_tickers):
-            rows.append({
-                "rank_hint": i + 1,
-                "company_name": "",
-                "ticker": t,
-                "listed_country": "",
-                "primary_exchange": "",
-                "subtheme_bucket": "",
-                "approx_market_cap_usd": 0.0,
-                "theme_revenue_ratio": 0.0,
-                "theme_revenue_ratio_method": "estimated",
-                "theme_revenue_ratio_confidence": "Low",
-            })
+            obj = {"status": "error", "_raw_text": raw_text, "_debug_meta": debug_meta}
 
-    # Build DataFrame (even if empty) — DO NOT FAIL
+    norm = normalize_draft_from_obj(obj)
+    status = norm.get("status","ok")
+    theme_def = str(norm.get("theme_definition","") or "")
+    notes = str(norm.get("notes","") or "")
+    ref_etfs = norm.get("reference_etfs", []) or []
+    rows = norm.get("rows", []) or []
+
+    # If still no rows, fallback to ticker extraction from raw text
+    raw_text = str((obj or {}).get("_raw_text","") or raw_text or "")
+    if not rows:
+        tickers = extract_tickers_from_text(raw_text, max_n=pool)
+        if tickers:
+            notes = (notes + " " if notes else "") + "Fallback: extracted tickers from raw AI output (shape drift / non-JSON)."
+            rows = []
+            for i, t in enumerate(tickers):
+                rows.append({
+                    "rank_hint": i + 1,
+                    "company_name": "",
+                    "ticker": t,
+                    "listed_country": "",
+                    "primary_exchange": "",
+                    "subtheme_bucket": "",
+                    "approx_market_cap_usd": 0.0,
+                    "theme_revenue_ratio": 0.0,
+                    "theme_revenue_ratio_method": "estimated",
+                    "theme_revenue_ratio_confidence": "Low",
+                })
+
+    # If still nothing, do SECOND CALL in TEXT mode (tickers-only)
+    if not rows:
+        try:
+            msgs2 = build_messages_tickers_only(theme, region, pool)
+            raw2, dbg2 = gemini_generate_raw_text(
+                messages=msgs2,
+                model=model,
+                temperature=0.05,
+                max_output_tokens=900,
+                timeout_s=10,
+                response_mime_type="text/plain",
+            )
+            raw_text = (raw_text + "\n\n---\n\n" + raw2).strip()
+            tickers2 = [ln.strip().upper() for ln in (raw2 or "").splitlines() if ln.strip()]
+            # filter out junk lines
+            tickers2 = [t for t in tickers2 if re.match(r"^[0-9A-Z]{1,10}(\.[A-Z]{1,6})?$", t)]
+            tickers2 = list(dict.fromkeys(tickers2))[:pool]
+            if tickers2:
+                notes = (notes + " " if notes else "") + "Fallback: second-call tickers-only (text mode)."
+                rows = []
+                for i, t in enumerate(tickers2):
+                    rows.append({
+                        "rank_hint": i + 1,
+                        "company_name": "",
+                        "ticker": t,
+                        "listed_country": "",
+                        "primary_exchange": "",
+                        "subtheme_bucket": "",
+                        "approx_market_cap_usd": 0.0,
+                        "theme_revenue_ratio": 0.0,
+                        "theme_revenue_ratio_method": "estimated",
+                        "theme_revenue_ratio_confidence": "Low",
+                    })
+        except Exception as e:
+            notes = (notes + " " if notes else "") + f"Second-call fallback failed: {e}"
+
+    # Build DataFrame for display (never fail)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[
         "rank_hint","company_name","ticker","listed_country","primary_exchange","subtheme_bucket",
         "approx_market_cap_usd","theme_revenue_ratio","theme_revenue_ratio_method","theme_revenue_ratio_confidence"
     ])
 
-    # Compute draft ranking fields robustly
     if not df.empty:
         df["approx_market_cap_usd"] = df["approx_market_cap_usd"].apply(parse_usd_number)
         df["theme_revenue_ratio"] = df["theme_revenue_ratio"].apply(parse_trr)
         df["theme_mktcap_usd"] = pd.to_numeric(df["approx_market_cap_usd"], errors="coerce").fillna(0.0) * pd.to_numeric(df["theme_revenue_ratio"], errors="coerce").fillna(0.0)
-
         df = df.sort_values(["theme_mktcap_usd","approx_market_cap_usd","rank_hint"], ascending=[False, False, True]).reset_index(drop=True)
         df["rank"] = np.arange(1, len(df) + 1)
         df["mcap_usd"] = df["approx_market_cap_usd"].astype(float)
@@ -1002,8 +1083,6 @@ def job_draft_universe(*, inp: ThemeInput, data_dir: str, cancel_event: threadin
         df["mcap_quality"] = []
 
     df["mktcap_asof_date"] = asof.isoformat()
-
-    # placeholders for summaries & evidence (ranked list uses Validate step)
     if "theme_business_summary" not in df.columns:
         df["theme_business_summary"] = ""
     if "non_theme_business_summary" not in df.columns:
@@ -1011,6 +1090,18 @@ def job_draft_universe(*, inp: ThemeInput, data_dir: str, cancel_event: threadin
     for col in ["trr_source_title","trr_source_publisher","trr_source_year","trr_source_url","trr_source_locator","trr_source_excerpt","trr_sources_full"]:
         if col not in df.columns:
             df[col] = "" if col != "trr_source_year" else None
+
+    # If ambiguous, show as ambiguous
+    if status == "ambiguous":
+        return {
+            "status": "ambiguous",
+            "asof": asof.isoformat(),
+            "theme_definition": theme_def,
+            "reference_etfs": ref_etfs,
+            "notes": notes,
+            "ai_raw_text": raw_text,
+            "debug_meta": (obj or {}).get("_debug_meta", {}),
+        }
 
     return {
         "status": "ok",
@@ -1023,6 +1114,7 @@ def job_draft_universe(*, inp: ThemeInput, data_dir: str, cancel_event: threadin
         "model": model,
         "draft_rows": df.to_dict(orient="records"),
         "ai_raw_text": raw_text,
+        "debug_meta": (obj or {}).get("_debug_meta", {}),
         "cache_keys": {"draft": cache_key},
     }
 
@@ -1040,7 +1132,6 @@ def job_validate_and_rank(*, inp: ThemeInput, data_dir: str, draft_rows: List[Di
     tickers = df["ticker"].astype(str).str.upper().tolist()
     tickers = list(dict.fromkeys([t.strip() for t in tickers if t.strip()]))
 
-    # bounded month-end mktcap proxy
     mkt = compute_mktcap_asof_usd_bounded(tickers, asof, timeout_total_s=12)
 
     validated_count = 0
@@ -1052,12 +1143,10 @@ def job_validate_and_rank(*, inp: ThemeInput, data_dir: str, draft_rows: List[Di
         df["mcap_quality"] = np.where(df["mcap_usd_val"].notna(), df["mcap_quality_val"], df.get("mcap_quality","ai_estimated_mktcap_usd"))
         df = df.drop(columns=[c for c in ["mcap_usd_val","mcap_quality_val"] if c in df.columns])
 
-    # compute theme mktcap and rank
     df["theme_revenue_ratio"] = df.get("theme_revenue_ratio", 0.0).apply(parse_trr)
     df["mcap_usd"] = pd.to_numeric(df.get("mcap_usd", 0.0), errors="coerce").fillna(0.0)
     df["theme_mktcap_usd"] = df["mcap_usd"] * df["theme_revenue_ratio"]
 
-    # soft large-cap filter only if we have validated mktcap
     thr = _large_cap_threshold_usd(region)
     df2 = df.copy()
     if validated_count > 0:
@@ -1068,19 +1157,21 @@ def job_validate_and_rank(*, inp: ThemeInput, data_dir: str, draft_rows: List[Di
     df2 = df2.head(top_n).copy()
     df2["mktcap_asof_date"] = asof.isoformat()
 
-    # Summaries for Top-N only (best-effort)
+    # Summaries (best-effort)
     model = _get_secret("GEMINI_MODEL") or "gemini-2.5-flash"
     top_tickers = df2["ticker"].astype(str).tolist()
 
     raw_sum = ""
+    smap: Dict[str, Dict[str, str]] = {}
     try:
         msgs_sum = build_messages_summaries(theme, top_tickers)
-        raw_sum = gemini_generate_raw_text(
+        raw_sum, _dbg = gemini_generate_raw_text(
             messages=msgs_sum,
             model=model,
             temperature=0.15,
             max_output_tokens=900,
             timeout_s=10,
+            response_mime_type="application/json",
         )
         try:
             obj = _parse_json_any(raw_sum)
@@ -1095,7 +1186,6 @@ def job_validate_and_rank(*, inp: ThemeInput, data_dir: str, draft_rows: List[Di
     df2["theme_business_summary"] = df2["theme_business_summary"].replace("", "テーマ関連は推計（Draft）。")
     df2["non_theme_business_summary"] = df2["non_theme_business_summary"].replace("", "非テーマ事業: 多角化（要確認）。")
 
-    # evidence placeholders
     for col in ["trr_source_title","trr_source_publisher","trr_source_year","trr_source_url","trr_source_locator","trr_source_excerpt","trr_sources_full"]:
         if col not in df2.columns:
             df2[col] = "" if col != "trr_source_year" else None
@@ -1136,12 +1226,13 @@ def job_refine(*, inp: ThemeInput, data_dir: str, current_rows: List[Dict[str, A
         })
 
     msgs = build_messages_refine_evidence(theme, region, asof, payload)
-    raw = gemini_generate_raw_text(
+    raw, _dbg = gemini_generate_raw_text(
         messages=msgs,
         model=model,
         temperature=0.10,
         max_output_tokens=2400,
         timeout_s=16,
+        response_mime_type="application/json",
     )
     obj = {}
     try:
@@ -1195,14 +1286,14 @@ def job_refine(*, inp: ThemeInput, data_dir: str, current_rows: List[Dict[str, A
 
 
 # =============================================================================
-# Definitions (always displayed)
+# Definitions
 # =============================================================================
 def build_definitions_table() -> pd.DataFrame:
     return pd.DataFrame([
         {"Field": "Theme Market Cap", "Definition": "Theme Market Cap = Market Cap (USD, month-end target; validated if possible) × TRR"},
         {"Field": "TRR (Theme Revenue Ratio)", "Definition": "TRR = テーマ関連売上 ÷ 総売上（0〜1）"},
-        {"Field": "Market Cap (validated)", "Definition": "Validate step uses month-end proxy: floatShares×Close (fallbacks: sharesOutstanding×Close / derived / marketCap field)"},
-        {"Field": "Market Cap (draft)", "Definition": "Draft step uses AI estimated month-end market cap in USD (or unknown if model output is unstructured)"},
+        {"Field": "Draft market cap", "Definition": "AI推計の月末時価総額（USD）。欠損/壊れた場合は unknown として表示"},
+        {"Field": "Validated market cap", "Definition": "Validate step uses month-end proxy: floatShares×Close (fallbacks: sharesOutstanding×Close / derived / marketCap field)"},
         {"Field": "As-of date", "Definition": "時価総額基準日（原則：直近月末）"},
         {"Field": "Method / Confidence", "Definition": "disclosed/proxy/estimated と High/Med/Low（推計は明示）"},
         {"Field": "Sources (Refine)", "Definition": "title/publisher/year/url/locator/excerpt。url無しの場合 excerpt は空文字"},
@@ -1217,14 +1308,13 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
     st.markdown('<div class="tl-title">THEMELENS</div>', unsafe_allow_html=True)
 
     ss = st.session_state
-    ss.setdefault("tl_draft_rows", None)   # draft list
-    ss.setdefault("tl_rows", None)         # ranked top-N
+    ss.setdefault("tl_draft_rows", None)
+    ss.setdefault("tl_rows", None)
     ss.setdefault("tl_meta", {})
     ss.setdefault("tl_job", None)
     ss.setdefault("tl_future", None)
     ss.setdefault("tl_cancel_event", None)
 
-    # Controls
     st.markdown('<div class="tl-panel">', unsafe_allow_html=True)
     with st.form("tl_controls", clear_on_submit=False):
         theme_text = st.text_input("Theme", value=ss.get("tl_theme_text", "半導体"), placeholder="例: 半導体 / ゲーム / サイバー / 生成AI / 防衛 ...")
@@ -1250,17 +1340,15 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
     inp = ThemeInput(theme_text=str(theme_text or "").strip(), region_mode=region_mode, top_n=int(top_n))
     asof = most_recent_month_end(date.today())
 
-    # Button validation
     if validate_btn and ss.get("tl_draft_rows") is None:
         st.warning("Run Draft first.")
         validate_btn = False
     if refine_btn and ss.get("tl_rows") is None:
-        st.warning("Run Validate & Rank first (or at least have a ranked list).")
+        st.warning("Run Validate & Rank first.")
         refine_btn = False
 
-    # Start jobs
     if draft_btn:
-        ss["tl_draft_rows"] = []  # set to empty list immediately so UI can show "raw" later
+        ss["tl_draft_rows"] = []  # placeholder
         ss["tl_rows"] = None
         ss["tl_meta"] = {}
         cancel_event = threading.Event()
@@ -1285,19 +1373,17 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
         ss["tl_future"] = _executor().submit(job_refine, inp=inp, data_dir=data_dir, current_rows=current_rows, cancel_event=cancel_event)
         _rerun()
 
-    # Running UI
     job = ss.get("tl_job")
     fut = ss.get("tl_future")
     if job and job.get("status") == "running" and fut is not None:
         elapsed = time.time() - float(job.get("started_at", time.time()))
-        mode = job.get("mode", "")
-
+        mode = job.get("mode","")
         if mode == "draft":
-            st.info("Draft: Gemini returns a large-cap universe (N+20) with TRR + market-cap estimates. If JSON breaks, we still show the raw output and extract tickers.")
+            st.info("Draft: if JSON shape drifts, we still parse companies/items/tickers; if everything fails, we do a second tickers-only call.")
         elif mode == "validate":
-            st.info("Validate & Rank: try to replace AI market caps with month-end proxy. Hard timeout is enforced.")
+            st.info("Validate & Rank: bounded month-end market cap proxy. Hard timeout.")
         else:
-            st.info("Refine: add TRR sources/locators and improve summaries.")
+            st.info("Refine: add TRR evidence metadata (best-effort).")
 
         cA, cB, cC = st.columns([1.0, 1.0, 3.0])
         with cA:
@@ -1315,11 +1401,7 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
         with cB:
             st.metric("Elapsed", f"{elapsed:.1f}s")
         with cC:
-            st.caption("If it takes too long: cancel → at least the Draft stage can still show raw output/tickers.")
-
-        budget = 16 if mode == "draft" else (18 if mode == "validate" else 22)
-        if elapsed > budget:
-            st.warning("This is taking longer than expected. You can cancel and retry.")
+            st.caption("Draft should always show something. If not, open 'AI raw output (debug)'.")
 
         if fut.done():
             try:
@@ -1335,33 +1417,34 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
 
             if isinstance(res, dict):
                 ss["tl_meta"] = res
-                # ALWAYS store draft_rows if present, even if empty
                 if res.get("mode") == "draft":
-                    ss["tl_draft_rows"] = res.get("draft_rows", ss.get("tl_draft_rows"))
+                    ss["tl_draft_rows"] = res.get("draft_rows", [])
                 if res.get("mode") in ("ranked","refined"):
                     ss["tl_rows"] = res.get("ranked")
             else:
-                ss["tl_meta"] = {"status": "error", "notes": "Unexpected result type."}
+                ss["tl_meta"] = {"status":"error","notes":"Unexpected result type."}
 
             _rerun()
 
         time.sleep(0.45)
         _rerun()
 
-    # Output
     meta = ss.get("tl_meta") or {}
-    draft_rows = ss.get("tl_draft_rows")   # may be None, [], or list
+    draft_rows = ss.get("tl_draft_rows")
     rows = ss.get("tl_rows")
-    ai_raw = str(meta.get("ai_raw_text","") or "").strip()
 
-    # Always offer raw model output when present
+    ai_raw = str(meta.get("ai_raw_text","") or "").strip()
     if ai_raw:
         with st.expander("AI raw output (debug)", expanded=False):
-            st.text(ai_raw[:12000])  # cap for UI safety
+            st.text(ai_raw[:12000])
 
-    # Ambiguous
+    dbg = meta.get("debug_meta")
+    if isinstance(dbg, dict) and (dbg.get("no_candidates") or dbg.get("promptFeedback")):
+        with st.expander("Gemini debug meta", expanded=False):
+            st.json(dbg)
+
     if isinstance(meta, dict) and meta.get("status") == "ambiguous":
-        st.error("Theme is ambiguous / not investable (boundary unclear).")
+        st.error("Theme is ambiguous / not investable.")
         if meta.get("theme_definition"):
             st.write(str(meta.get("theme_definition")))
         ref = meta.get("reference_etfs", []) or []
@@ -1371,18 +1454,12 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
             st.caption(str(meta.get("notes")))
         return
 
-    # Draft list display — show even if empty list
     if draft_rows is not None:
         ddf = pd.DataFrame(draft_rows) if isinstance(draft_rows, list) else pd.DataFrame()
         st.markdown("#### Draft Universe")
-        chips = []
-        chips.append(f'<span class="tl-chip">As-of target: {asof.isoformat()}</span>')
-        if not ddf.empty:
-            chips.append(f'<span class="tl-chip">Pool: {len(ddf)}</span>')
-        st.markdown("".join(chips), unsafe_allow_html=True)
-
+        st.markdown(f'<span class="tl-chip">As-of target: {asof.isoformat()}</span>', unsafe_allow_html=True)
         if ddf.empty:
-            st.warning("No structured rows to display yet. If AI returned something, see 'AI raw output (debug)' above.")
+            st.warning("Draft returned no rows. Open 'AI raw output (debug)' to see what came back.")
         else:
             dview = ddf.copy()
             dview["TRR"] = (pd.to_numeric(dview.get("theme_revenue_ratio", 0.0), errors="coerce").fillna(0.0) * 100).round(1).astype(str) + "%"
@@ -1392,7 +1469,6 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
             cols = [c for c in cols if c in dview.columns]
             st.dataframe(dview[cols], use_container_width=True, height=420)
 
-    # Ranked deliverable
     if rows:
         df = pd.DataFrame(rows)
         if not df.empty:
@@ -1406,11 +1482,6 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
                 st.metric("Top N", int(top_n))
             with k4:
                 st.metric("Mode", str(meta.get("mode","")))
-
-            if meta.get("mode") == "ranked":
-                vc = meta.get("validated_mktcap_count", 0)
-                vt = meta.get("validated_mktcap_total", 0)
-                st.caption(f"Validated market cap: {vc}/{vt} tickers. (Unvalidated use Draft estimates.)")
 
             view = df.copy()
             view["TRR"] = (pd.to_numeric(view.get("theme_revenue_ratio", 0.0), errors="coerce").fillna(0.0) * 100).round(1).astype(str) + "%"
@@ -1427,26 +1498,10 @@ def render_next_gen_tab(data_dir: str = "data") -> None:
             show_cols = [c for c in show_cols if c in view.columns]
             st.dataframe(view[show_cols], use_container_width=True, height=560)
 
-            sid = _sha12(f"{theme_text}|{region_mode}|{asof.isoformat()}|{top_n}")
-            st.download_button(
-                "Download CSV",
-                data=df.to_csv(index=False).encode("utf-8"),
-                file_name=f"themelens_ranked_list_{sid}.csv",
-                mime="text/csv",
-            )
-            st.download_button(
-                "Download JSON (snapshot)",
-                data=json.dumps({"meta": meta, "draft_rows": draft_rows, "rows": rows}, ensure_ascii=False, indent=2).encode("utf-8"),
-                file_name=f"themelens_snapshot_{sid}.json",
-                mime="application/json",
-            )
-
-    # Definitions (always visible)
     st.markdown("### Definitions")
     st.markdown(
         "- **Theme Market Cap** = Market Cap (USD, month-end target; validated if possible) × **TRR**\n"
-        "- **TRR (Theme Revenue Ratio)** = テーマ関連売上 ÷ 総売上（0〜1）\n"
-        "- **Draft** = AI推計（market cap / TRR）。JSONが壊れても raw を表示し、ticker抽出で最低限のリストを作ります\n"
-        "- **Validate & Rank** = 月末時価総額proxyを取得できた銘柄だけ置換し、再ランキング"
+        "- **TRR** = テーマ関連売上 ÷ 総売上（0〜1）\n"
+        "- Draftは **JSON shape drift** を吸収します（rows/companies/items/tickers）。最悪は **tickers-only** で必ずリスト化します。"
     )
     st.dataframe(build_definitions_table(), use_container_width=True, height=330)
