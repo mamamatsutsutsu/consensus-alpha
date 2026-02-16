@@ -38,6 +38,7 @@ MARKETS = universe.MARKETS
 NAME_DB = universe.NAME_DB
 LOOKBACKS = {"1W (5d)": 5, "1M (21d)": 21, "3M (63d)": 63, "12M (252d)": 252}
 FETCH_PERIOD = "24mo"
+BUILD_ID = "2026-02-16-r5"  # visible build stamp for ops/debug
 
 @st.cache_data(ttl=86400)
 def fetch_name_fallback(ticker: str) -> str:
@@ -1688,6 +1689,7 @@ div[data-baseweb="menu"] span{
 """, unsafe_allow_html=True)
     
     st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
+    st.markdown(f"<div class='dim' style='margin-top:-10px; margin-bottom:6px;'>Build: {BUILD_ID}</div>", unsafe_allow_html=True)
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1.0])
@@ -2327,10 +2329,9 @@ div[data-baseweb="menu"] span{
     website_url = _safe_http_url(website)
     if website_url:
         website_disp = website_url.replace("https://", "").replace("http://", "")
-        website_html = (
-            f"<a href='{html_lib.escape(website_url, quote=True)}' target='_blank' rel='noopener noreferrer'>"
-            f"{html_lib.escape(website_disp, quote=True)}</a>"
-        )
+        escaped_url = html_lib.escape(website_url, quote=True)
+        escaped_disp = html_lib.escape(website_disp, quote=True)
+        website_html = f'<a href="{escaped_url}" target="_blank" rel="noopener noreferrer">{escaped_disp} <span class="link-arrow">↗</span></a>'
     else:
         website_html = "<span class='dim'>— (load fundamentals)</span>"
 
@@ -2434,19 +2435,17 @@ div[data-baseweb="menu"] span{
     # UI
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        # --- JP Company Snapshot (always shown at the top) ---
+        # --- JP Company Snapshot (embedded at the top of AI EQUITY BRIEFING) ---
         if snap_jp:
             snap_disp = quality_gate_text(enforce_da_dearu_soft(snap_jp), enable=st.session_state.get('qc_on', True))
-            st.markdown(
-                f"<div class='snapshot-box'><div class='snapshot-title'>AI SNAPSHOT (JP)</div>"
-                f"<div class='snapshot-text'>{text_to_safe_html(snap_disp)}</div></div>",
-                unsafe_allow_html=True,
+            snapshot_inline_html = (
+                "<div class='snapshot-box'><div class='snapshot-title'>AI SNAPSHOT (JP)</div>"
+                f"<div class='snapshot-text'>{text_to_safe_html(snap_disp)}</div></div>"
             )
         else:
-            st.markdown(
+            snapshot_inline_html = (
                 "<div class='snapshot-box'><div class='snapshot-title'>AI SNAPSHOT (JP)</div>"
-                "<div class='dim'>Not generated yet. Open the panel below and click <b>GENERATE JP SNAPSHOT</b>.</div></div>",
-                unsafe_allow_html=True,
+                "<div class='dim'>Not generated yet. Open the panel below and click <b>GENERATE JP SNAPSHOT</b>.</div></div>"
             )
 
         with st.expander("🇯🇵 AI COMPANY SNAPSHOT (JP) — Generate (on-demand)", expanded=False):
@@ -2548,10 +2547,11 @@ div[data-baseweb="menu"] span{
             report_txt_disp = quality_gate_text(enforce_da_dearu_soft(report_body), enable=st.session_state.get('qc_on', True))
             report_html = text_to_safe_html(report_txt_disp)
             gen_stamp = f"<div class='dim' style='margin-top:6px;'>Generated: {html_lib.escape(generated_at, quote=True)}</div>" if generated_at else ""
-            st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_html}{gen_stamp}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{snapshot_inline_html}{report_html}{gen_stamp}</div>", unsafe_allow_html=True)
         else:
             st.markdown(
-                "<div class='report-box'><b>AI EQUITY BRIEFING</b><br>"
+                f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>"
+                f"{snapshot_inline_html}"
                 "<span class='dim'>AI briefing is <b>on-demand</b>. Open the panel below and click <b>GENERATE AI EQUITY BRIEFING</b>.</span>"
                 "</div>",
                 unsafe_allow_html=True,
