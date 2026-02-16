@@ -39,7 +39,6 @@ MARKETS = universe.MARKETS
 NAME_DB = universe.NAME_DB
 LOOKBACKS = {"1W (5d)": 5, "1M (21d)": 21, "3M (63d)": 63, "12M (252d)": 252}
 FETCH_PERIOD = "24mo"
-BUILD_ID = "2026-02-16-r8"  # visible in UI for deployment verification
 
 @st.cache_data(ttl=86400)
 def fetch_name_fallback(ticker: str) -> str:
@@ -1686,23 +1685,11 @@ div[data-baseweb="menu"] span{
   text-decoration: underline;
 }
 
-
-/* Build badge (deployment verification) */
-.build-badge{
-  font-family:'JetBrains Mono', monospace !important;
-  font-size: 11px;
-  letter-spacing: 0.10em;
-  color: #9fb3b6;
-  margin-top: -10px;
-  margin-bottom: 10px;
-  text-align: center;
-}
-
 </style>
 """, unsafe_allow_html=True)
     
     st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
-    st.markdown(f"<div class='build-badge'>Build: {BUILD_ID}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='mini-note'><span class='dim'>Build:</span> <b>2026-02-16-r9</b></div>", unsafe_allow_html=True)
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1.0])
@@ -2941,12 +2928,12 @@ div[data-baseweb="menu"] span{
                     try:
                         idx0 = uni.index[uni["Ticker"] == target_ticker]
                         if len(idx0) > 0:
-                            pct = float((s.rank(pct=True) * 100).loc[idx0].iloc[0])
+                            pctile = float((s.rank(pct=True) * 100).loc[idx0].iloc[0])
                         else:
-                            pct = float((s < v).mean() * 100)
+                            pctile = float((s < v).mean() * 100)
                     except Exception:
-                        pct = float((s < v).mean() * 100)
-                    pct_rows.append({"Metric": met, "Value": v, "Percentile": pct})
+                        pctile = float((s < v).mean() * 100)
+                    pct_rows.append({"Metric": met, "Value": v, "Percentile": pctile})
                 if pct_rows:
                     pct_df = pd.DataFrame(pct_rows)
                     # Formatting
@@ -2963,7 +2950,6 @@ div[data-baseweb="menu"] span{
 
                 # Visuals
                 try:
-
                     plot_df = peers.copy()
                     # Bubble size (log cap)
                     plot_df["MCapSize"] = pd.to_numeric(plot_df["MCap"], errors="coerce")
