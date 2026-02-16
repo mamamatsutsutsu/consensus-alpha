@@ -113,17 +113,32 @@ def outlook_date_slots(days: List[int] = [7, 21, 35, 49, 63, 84]) -> List[str]:
     return [(base + timedelta(days=d)).strftime("%Y/%m/%d") for d in days]
 
 def safe_link_button(label: str, url: str, use_container_width: bool = True):
+    """Render a high-contrast external link button (mobile-friendly).
+
+    We intentionally avoid st.link_button here because its internal styling can drift across Streamlit versions
+    and sometimes becomes low-contrast on dark themes (especially on mobile).
+    """
+    lbl = html_lib.escape(str(label), quote=True)
+
     if not url:
-        st.button(label, disabled=True, use_container_width=use_container_width)
+        st.markdown(f"<div class='link-btn-disabled'>{lbl}</div>", unsafe_allow_html=True)
         return
+
     try:
-        fn = getattr(st, "link_button", None)
-        if callable(fn):
-            fn(label, url, use_container_width=use_container_width)
-        else:
-            st.markdown(f"- [{label}]({url})")
+        u = str(url).strip()
+        # Allow only http(s) links
+        if not re.match(r"^https?://", u, flags=re.I):
+            st.markdown(f"<div class='link-btn-disabled'>{lbl}</div>", unsafe_allow_html=True)
+            return
+
+        href = html_lib.escape(u, quote=True)
+        style = "width:100%;" if use_container_width else ""
+        st.markdown(
+            f"<a class='link-btn' style='{style}' href='{href}' target='_blank' rel='noopener noreferrer'>{lbl} ↗</a>",
+            unsafe_allow_html=True,
+        )
     except Exception:
-        st.markdown(f"- [{label}]({url})")
+        st.markdown(f"<div class='link-btn-disabled'>{lbl}</div>", unsafe_allow_html=True)
 
 def build_ir_links(name: str, ticker: str, website: Optional[str], market_key: str) -> Dict[str, str]:
     q_site = urllib.parse.quote(name)
@@ -1081,6 +1096,28 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
         【想定リスク】
         【今後3ヶ月の監視ポイント】
         """
+    elif prompt_key == "company_snapshot_jp":
+        p = f"""
+        現在: {today_str}
+        銘柄:{context.get('name','')} ({context.get('ticker','')})
+        FACTS:
+        - Sector: {context.get('sector','-')}
+        - Industry: {context.get('industry','-')}
+        - Market Cap: {context.get('mcap','-')}
+        - Website: {context.get('website','-')}
+        - Business Summary (source text): {context.get('summary_en','')}
+        Nonce:{context.get('nonce',0)}
+
+        タスク:
+        - 日本語で約200文字（180〜220文字）で、会社の事業概要を1段落で要約せよ。
+        - 文体は「だ・である」。改行/箇条書き/見出しは禁止。
+        - 記号（** や "" や「・」の羅列）は使わない。絵文字も禁止。
+        - 上のFACTSとSummary以外の新事実追加は禁止。推測で固有名詞（製品名/顧客/競合/地域）を増やさない。
+        - 何で稼ぐ会社か（収益源）と、競争軸（強み/差別化）を各1点ずつ入れる。
+        - 最後に「今後3ヶ月で市場が注目しやすい論点」を1つだけ添える（Summaryから推論できる範囲）。
+        出力: 本文のみ。
+        """
+
     elif prompt_key == "stock_report":
         p = f"""
         現在: {today_str}
@@ -1132,6 +1169,50 @@ def generate_ai_content(prompt_key: str, context: Dict) -> str:
             except Exception as e:
                 if "429" in str(e): time.sleep(1); continue
     return last_text or "AI OFFLINE"
+
+
+def _clamp_single_line(text: str, max_chars: int = 220) -> str:
+    """Clamp text to a single line and max character length (for UI snippets)."""
+    if text is None:
+        return ""
+    t = clean_ai_text(str(text))
+    t = t.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return ""
+    if len(t) > max_chars:
+        t = t[:max_chars].rstrip(" 、。.,") + "…"
+    return t
+
+@st.cache_data(ttl=24*3600, show_spinner=False)
+def company_snapshot_jp_cached(ticker: str, name: str, sector: str, industry: str, mcap_disp: str, website: str, summary_en: str) -> str:
+    """AI-generated 200-char-ish company snapshot in Japanese (cached)."""
+    try:
+        if not HAS_LIB or not API_KEY:
+            return ""
+        ctx = {
+            "ticker": ticker,
+            "name": name,
+            "sector": sector,
+            "industry": industry,
+            "mcap": mcap_disp,
+            "website": website,
+            "summary_en": (summary_en or "")[:1200],
+            # keep deterministic unless the user explicitly refreshes AI
+            "nonce": 0,
+        }
+        txt = generate_ai_content("company_snapshot_jp", ctx)
+        txt = _clamp_single_line(txt, 220)
+        if txt.strip().upper() == "AI OFFLINE":
+            return ""
+        # If the model still outputs non-Japanese, try faithful translation as a fallback.
+        if txt and (not _looks_japanese(txt)):
+            tr = translate_summary_to_japanese_cached(txt, nonce=0)
+            if tr:
+                txt = _clamp_single_line(tr, 220)
+        return txt
+    except Exception:
+        return ""
 
 
 def plot_relative_1y(ticker: str, sector_etf: str, bench: str, market_key: str):
@@ -1450,6 +1531,124 @@ div[data-baseweb="select"] > div{
   border-radius: 14px !important;
 }
 div[data-baseweb="select"] span{ color: var(--text) !important; }
+/* Fix: selected text turning black (mobile/iOS) */
+div[data-baseweb="select"] div{ color: var(--text) !important; }
+div[data-baseweb="select"] > div{ cursor: pointer; }
+div[data-baseweb="select"] input{
+  color: var(--text) !important;
+  -webkit-text-fill-color: var(--text) !important;
+  caret-color: var(--text) !important;
+}
+div[data-baseweb="select"] input::placeholder{
+  color: #aaa !important;
+  -webkit-text-fill-color: #aaa !important;
+}
+div[data-baseweb="select"] svg{
+  fill: var(--text) !important;
+}
+/* Make selectbox labels feel clickable */
+div[data-testid="stSelectbox"] label{
+  color: rgba(0,242,254,0.95) !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.12em !important;
+}
+/* Dropdown menu (BaseWeb) */
+div[data-baseweb="popover"] div[role="listbox"]{
+  background:#080808 !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+div[data-baseweb="popover"] div[role="option"]{
+  color: var(--text) !important;
+}
+div[data-baseweb="popover"] div[role="option"]:hover{
+  background: rgba(0,242,254,0.10) !important;
+}
+div[data-baseweb="popover"] div[aria-selected="true"]{
+  background: rgba(255,0,85,0.12) !important;
+}
+
+/* Link buttons (custom <a>) */
+a.link-btn{
+  display:block;
+  text-align:center;
+  background: linear-gradient(90deg, rgba(0,242,254,0.26), rgba(255,0,85,0.16)) !important;
+  border: 1px solid rgba(0,242,254,0.45) !important;
+  color: var(--text) !important;
+  border-radius: 14px !important;
+  padding: 0.60rem 0.75rem !important;
+  font-family: 'Orbitron', sans-serif !important;
+  font-weight: 800 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em !important;
+  text-decoration:none !important;
+  box-shadow: 0 0 18px rgba(0,242,254,0.10) !important;
+  line-height: 1.1 !important;
+}
+a.link-btn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 0 24px rgba(0,242,254,0.22) !important;
+}
+a.link-btn:active{
+  transform: translateY(0px);
+  box-shadow: 0 0 10px rgba(255,0,85,0.18) !important;
+}
+div.link-btn-disabled{
+  display:block;
+  text-align:center;
+  background: rgba(17,17,17,0.65) !important;
+  border: 1px dashed rgba(255,255,255,0.18) !important;
+  color: rgba(230,230,230,0.35) !important;
+  border-radius: 14px !important;
+  padding: 0.60rem 0.75rem !important;
+  font-family: 'Orbitron', sans-serif !important;
+  font-weight: 800 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em !important;
+}
+
+/* AI company snapshot (JP) */
+.snapshot-box{
+  margin: 10px 0 12px 0;
+  padding: 12px 12px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(0,242,254,0.10), rgba(255,0,85,0.06)) !important;
+  border: 1px solid rgba(0,242,254,0.22) !important;
+  border-left: 4px solid rgba(0,242,254,0.85) !important;
+}
+.snapshot-label{
+  font-family: 'Orbitron', sans-serif !important;
+  font-size: 12px !important;
+  letter-spacing: 0.10em !important;
+  color: rgba(0,242,254,0.95) !important;
+  margin-bottom: 6px;
+}
+.snapshot-text{
+  color: #f1f1f1 !important;
+  font-size: var(--fz-body) !important;
+  line-height: 1.85;
+}
+
+/* Mobile tweaks */
+@media (max-width: 640px){
+  div[data-testid="stSelectbox"] label{
+    font-size: 12px !important;
+    letter-spacing: 0.10em !important;
+  }
+  div[data-baseweb="select"] > div{
+    min-height: 44px !important;
+  }
+  a.link-btn, div.link-btn-disabled{
+    padding: 0.72rem 0.65rem !important;
+    font-size: 11px !important;
+    letter-spacing: 0.06em !important;
+  }
+  .action-call{
+    font-size: 12px !important;
+  }
+  .snapshot-label{ font-size: 11px !important; }
+  .snapshot-box{ padding: 12px 10px !important; }
+}
+
 
 /* Notes */
 .note-box{
@@ -1494,6 +1693,8 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
         refresh_prices = st.button("🔄 RELOAD MARKET DATA", use_container_width=True)
         qc_on = st.toggle("🛡️ AI output quality check", value=st.session_state.get("qc_on", True), help="Checks AI text for artifacts/overconfidence before showing. Does not add new facts.")
         st.session_state.qc_on = qc_on
+
+    st.markdown("<div class='action-call'>Set your lens: choose a MARKET and a WINDOW. Then hit <b>GENERATE AI INSIGHTS</b> — and tap a stock in the LEADERBOARD for the full briefing.</div>", unsafe_allow_html=True)
 
     # Reset sector selection when MARKET/WINDOW changes
     prev_market = st.session_state.last_market_key
@@ -1980,20 +2181,23 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     mcap_disp = format_mcap(mcap, cur)
     website = fund_data.get("Website") or "-"
 
-    # Keep summary ONLY as hidden AI context (not shown as a duplicated UI block)
+    # Business summary (source: yfinance) is used as AI context ONLY (not shown verbatim)
     bsum_raw = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
     bsum_raw = re.sub(r"\s+", " ", bsum_raw).strip()
     bsum_src = (bsum_raw[:1200] if bsum_raw else "")
-    bsum_ja = ""
-    try:
-        bsum_ja = translate_summary_to_japanese_cached(bsum_src, nonce=st.session_state.ai_nonce)
-    except Exception:
-        bsum_ja = ""
-    bsum = (bsum_ja.strip() if bsum_ja else bsum_src)
-    if len(bsum) > 280:
-        bsum = bsum[:280].rstrip() + "…"
 
-    overview_for_ai = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Summary:{bsum if bsum else '-'}"
+    # New process: ask AI for a ~200-char Japanese snapshot (displayed in the analyst report header)
+    ai_blurb_jp = ""
+    try:
+        ai_blurb_jp = company_snapshot_jp_cached(
+            top["Ticker"], top["Name"], sec_name, ind_name, mcap_disp, website, bsum_src
+        )
+    except Exception:
+        ai_blurb_jp = ""
+    ai_blurb_jp = _clamp_single_line(ai_blurb_jp, 220)
+
+    overview_for_ai = f"Sector:{sec_name} | Industry:{ind_name} | MCap:{mcap_disp} | Website:{website} | SnapshotJP:{ai_blurb_jp if ai_blurb_jp else '-'}"
+
     overview_display = f"Sector: {sec_name} | Industry: {ind_name} | Market Cap: {mcap_disp}"
 
     overview_display_html = html_lib.escape(str(overview_display), quote=True)
@@ -2065,6 +2269,7 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
         "Company Overview\n"
         + f"Name: {top['Name']} ({top['Ticker']})\n"
         + f"Sector: {sec_name}\nIndustry: {ind_name}\nMarket Cap: {mcap_disp}\nWebsite: {website}\n\n"
+        + (f"AI Company Snapshot (JP)\n{ai_blurb_jp}\n\n" if ai_blurb_jp else "")
         + "Quantitative Summary\n"
         + fund_str
         + "\n\n"
@@ -2076,9 +2281,14 @@ div[data-baseweb="select"] span{ color: var(--text) !important; }
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
         report_html = text_to_safe_html(report_txt_disp)
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_html}</div>", unsafe_allow_html=True)
+        snap_html = ""
+        if ai_blurb_jp:
+            snap_txt = text_to_safe_html(ai_blurb_jp)
+            snap_html = f"<div class='snapshot-box'><div class='snapshot-label'>AI COMPANY SNAPSHOT (JP)</div><div class='snapshot-text'>{snap_txt}</div></div>"
+        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{snap_html}{report_html}</div>", unsafe_allow_html=True)
 
         # Links
+        st.markdown("<div class='mini-note'>Quick links ↗ OFFICIAL (company site) • IR SEARCH (investor relations) • EARNINGS DECK (latest slides/PDF). Opens in a new tab.</div>", unsafe_allow_html=True)
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
         lc1, lc2, lc3 = st.columns(3)
         with lc1: safe_link_button("OFFICIAL", links["official"], use_container_width=True)
