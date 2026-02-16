@@ -113,15 +113,27 @@ def outlook_date_slots(days: List[int] = [7, 21, 35, 49, 63, 84]) -> List[str]:
     return [(base + timedelta(days=d)).strftime("%Y/%m/%d") for d in days]
 
 def _safe_http_url(url: Any) -> str:
-    """Allow only http/https URLs for clickable links (defense-in-depth)."""
+    """Allow only http/https URLs for clickable links (defense-in-depth).
+
+    Also normalizes bare domains like 'example.com' into 'https://example.com'.
+    """
     try:
         if not url:
             return ""
         u = str(url).strip()
         if not u:
             return ""
+        # If scheme is missing but it looks like a domain, prefix https://
+        if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", u):
+            if re.search(r"\s", u):
+                return ""
+            u2 = u.lstrip("/")
+            if "." in u2:
+                u = "https://" + u2
         p = urllib.parse.urlparse(u)
         if p.scheme not in ("http", "https"):
+            return ""
+        if not p.netloc:
             return ""
         return u
     except Exception:
@@ -154,7 +166,7 @@ def build_ir_links(name: str, ticker: str, website: Optional[str], market_key: s
     else:
         q_deck = urllib.parse.quote(f"{name} 決算説明資料 pdf")
             
-    official = website if website and website.startswith("http") else f"https://www.google.com/search?q={q_site}+official+site"
+    official = _safe_http_url(website) or f"https://www.google.com/search?q={q_site}+official+site"
     
     return {
         "official": official,
@@ -1384,6 +1396,11 @@ def run():
     if "last_market_key" not in st.session_state: st.session_state.last_market_key = None
     if "last_lookback_key" not in st.session_state: st.session_state.last_lookback_key = None
     if "ai_nonce" not in st.session_state: st.session_state.ai_nonce = 0
+    if "ai_panels" not in st.session_state: st.session_state.ai_panels = {}
+    if "peer_cache" not in st.session_state: st.session_state.peer_cache = {}
+    if "news_panels" not in st.session_state: st.session_state.news_panels = {}
+    if "fund_panels" not in st.session_state: st.session_state.fund_panels = {}
+    if "jp_snapshots" not in st.session_state: st.session_state.jp_snapshots = {}
 
     # --- UI STYLES ---
     st.markdown("""
@@ -1645,6 +1662,14 @@ div[data-baseweb="menu"] span{
   color: #eee;
   white-space: pre-wrap;
 }
+.note-box a{
+  color: #00f2fe !important;
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(0,242,254,0.65);
+}
+.note-box a:hover{
+  text-decoration: underline;
+}
 .mini-note{
   font-size: var(--fz-note) !important;
   color: #bbb;
@@ -1769,12 +1794,12 @@ div[data-baseweb="menu"] span{
                 return
 
 
-    # 1. Market Pulse
+    # 1. Market Pulse (AI on-demand for fast startup)
     b_stats = calc_technical_metrics(core_df[bench_used], core_df[bench_used], win)
     if not b_stats: st.error("BENCH ERROR"); return
 
     regime, weight_mom = calculate_regime(core_df[bench_used].dropna())
-    
+
     sec_rows = []
     for s_n, s_t in m_cfg["sectors"].items():
         if s_t in audit["list"]:
@@ -1782,7 +1807,7 @@ div[data-baseweb="menu"] span{
             if res:
                 res["Sector"] = s_n
                 sec_rows.append(res)
-    
+
     if not sec_rows:
         st.warning("SECTOR DATA INSUFFICIENT (continuing with degraded view)")
         sdf = pd.DataFrame()
@@ -1801,51 +1826,107 @@ div[data-baseweb="menu"] span{
 
     s_date = core_df.index[-win-1].strftime('%Y/%m/%d')
     e_date = core_df.index[-1].strftime('%Y/%m/%d')
-        # --- News robustness: never fail Market Pulse ---
-    market_context, m_sent, m_meta = [], 0, {}
-    try:
-        _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
-    except Exception:
-        market_context, m_sent, m_meta = [], 0, {}
-    # News sentiment (robust defaults)
-    try:
-        s_score = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
-    except Exception:
-        s_score = 0
-    lbl = "Positive" if s_score > 0 else ("Negative" if s_score < 0 else "Neutral")
-    hit_pos = int((m_meta or {}).get("pos", 0))
-    hit_neg = int((m_meta or {}).get("neg", 0))
-    s_cls = "hl-pos" if s_score > 0 else ("hl-neg" if s_score < 0 else "hl-neutral")
 
-    
     # Definition Header (ORDER FIXED: Spread -> Regime -> NewsSent)
     index_name = get_name(bench)
     index_label = f"{index_name} ({bench})" if index_name else bench
 
-    st.markdown(f"""
-    <div class='market-box'>
-    <b class='orbitron'>MARKET PULSE ({s_date} - {e_date})</b><br>
-    <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='{s_cls}'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br>
-    """ + market_to_html(force_nonempty_outlook_market(
-        enforce_market_format(enforce_index_naming(generate_ai_content("market", {
-            "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
-            "top": top_sector, "bot": bot_sector,
-            "market_name": m_cfg["name"], "headlines": (market_context[:900] if isinstance(market_context, str) else market_context),
-            "date_slots": outlook_date_slots(),
-            "index_label": index_label,
-            "nonce": st.session_state.ai_nonce
-        }), index_label)), regime, b_stats["Ret"], spread, market_key
-    )) + f"""
-    <div class='def-text'>
-    <b>DEFINITIONS</b> |
-    <b>Spread</b>: セクターRSの最大−最小(pt)。市場内の勝ち負けがどれだけ鮮明かを示す |
-    <b>Regime</b>: 200DMA判定（終値&gt;200DMA=Bull / 終値&lt;200DMA=Bear） |
-    <b>NewsSent</b>: 見出しキーワード命中（pos=+1/neg=−1）合計を−10〜+10にクリップ |
-    <b>RS</b>: 相対リターン差(pt)=セクター(or銘柄)リターン−市場平均リターン
-    </div>
-    </div>""", unsafe_allow_html=True)
+    # --- AI is on-demand: no headline fetch / no LLM call until user explicitly requests it ---
+    mp_ctx_id = f"{market_key}|{lookback_key}|{bench_used}|{s_date}|{e_date}|{st.session_state.ai_nonce}"
+    mp_saved = st.session_state.ai_panels.get(("market", mp_ctx_id), {}) if isinstance(st.session_state.get("ai_panels"), dict) else {}
 
-    
+    # Default header values (no news fetch yet)
+    s_score = 0
+    lbl = "Neutral"
+    hit_pos = 0
+    hit_neg = 0
+    s_cls = "hl-neutral"
+
+    # Default body (fast placeholder)
+    mp_body_html = "<span class='dim'>AI narrative is <b>on-demand</b>. Open the panel below and click <b>GENERATE MARKET PULSE</b>.</span>"
+
+    if isinstance(mp_saved, dict) and mp_saved.get("html"):
+        mp_body_html = mp_saved.get("html", mp_body_html)
+        s_score = int(mp_saved.get("s_score", s_score) or 0)
+        lbl = str(mp_saved.get("lbl", lbl) or lbl)
+        hit_pos = int(mp_saved.get("hit_pos", hit_pos) or 0)
+        hit_neg = int(mp_saved.get("hit_neg", hit_neg) or 0)
+        s_cls = str(mp_saved.get("s_cls", s_cls) or s_cls)
+
+    st.markdown(
+        f"""
+        <div class='market-box'>
+          <b class='orbitron'>MARKET PULSE ({s_date} - {e_date})</b><br>
+          <span class='caption-text'>Spread: {spread:.1f}pt | Regime: {regime} | NewsSent: <span class='{s_cls}'>{s_score:+d}</span> ({lbl}) [Hit:{hit_pos}/{hit_neg}]</span><br>
+          {mp_body_html}
+          <div class='def-text'>
+            <b>DEFINITIONS</b> |
+            <b>Spread</b>: セクターRSの最大−最小(pt)。市場内の勝ち負けがどれだけ鮮明かを示す |
+            <b>Regime</b>: 200DMA判定（終値&gt;200DMA=Bull / 終値&lt;200DMA=Bear） |
+            <b>NewsSent</b>: 見出しキーワード命中（pos=+1/neg=−1）合計を−10〜+10にクリップ |
+            <b>RS</b>: 相対リターン差(pt)=セクター(or銘柄)リターン−指数リターン（指数名は本文に明記）
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("🧠 MARKET PULSE — AI Narrative (on-demand)", expanded=False):
+        st.markdown(
+            "<div class='hint-bar'>"
+            "This panel fetches headlines and generates the Market Pulse narrative only when requested. "
+            "<span class='dim'>Tip:</span> Use <b>✨ GENERATE AI INSIGHTS</b> above to force-refresh (nonce)."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        gen_mp = st.button(
+            "GENERATE MARKET PULSE",
+            key=f"gen_market_pulse_{market_key}_{lookback_key}_{bench_used}",
+            type="primary",
+            use_container_width=True,
+        )
+        if gen_mp:
+            with st.spinner("Generating Market Pulse..."):
+                # Headlines + lightweight sentiment (cached 30m)
+                try:
+                    _, market_context, m_sent, m_meta = get_news_consolidated(bench, m_cfg["name"], market_key)
+                except Exception:
+                    market_context, m_sent, m_meta = "", 0, {}
+                try:
+                    s_score2 = int(np.clip(int(round(float(m_sent or 0))), -10, 10))
+                except Exception:
+                    s_score2 = 0
+                lbl2 = "Positive" if s_score2 > 0 else ("Negative" if s_score2 < 0 else "Neutral")
+                hit_pos2 = int((m_meta or {}).get("pos", 0))
+                hit_neg2 = int((m_meta or {}).get("neg", 0))
+                s_cls2 = "hl-pos" if s_score2 > 0 else ("hl-neg" if s_score2 < 0 else "hl-neutral")
+
+                raw_mp = generate_ai_content("market", {
+                    "s_date": s_date, "e_date": e_date, "ret": b_stats["Ret"],
+                    "top": top_sector, "bot": bot_sector,
+                    "market_name": m_cfg["name"],
+                    "headlines": (market_context[:900] if isinstance(market_context, str) else market_context),
+                    "slot_line": ", ".join(outlook_date_slots()),
+                    "index_label": index_label,
+                    "nonce": st.session_state.ai_nonce
+                })
+                raw_mp = enforce_index_naming(raw_mp, index_label)
+                raw_mp = enforce_market_format(raw_mp)
+                raw_mp = force_nonempty_outlook_market(raw_mp, regime, b_stats["Ret"], spread, market_key)
+                mp_html2 = market_to_html(raw_mp)
+
+                # Store for this context (no heavy work unless requested)
+                if isinstance(st.session_state.get("ai_panels"), dict):
+                    st.session_state.ai_panels[("market", mp_ctx_id)] = {
+                        "html": mp_html2,
+                        "s_score": s_score2,
+                        "lbl": lbl2,
+                        "hit_pos": hit_pos2,
+                        "hit_neg": hit_neg2,
+                        "s_cls": s_cls2,
+                    }
+                st.toast("✅ Market Pulse updated", icon="✅")
+                st.rerun()
     # If sector data is unavailable, stop after Market Pulse (degraded but stable)
     if sdf is None or (isinstance(sdf, pd.DataFrame) and sdf.empty):
         st.info("Sector rotation / sector leaderboard unavailable (insufficient sector ETF history for the selected window). Try REFRESH PRICES or a longer WINDOW.")
@@ -1986,8 +2067,9 @@ div[data-baseweb="menu"] span{
         f = pick_fund_row(cand_fund, nr["Ticker"])
         cand_lines.append(f"\n[AVOID] {nr['Name']}: Ret {nr['Ret']:.1f}%, RS {nr['RS']:.2f}, PER {dash(f.get('PER'))}")
 
-    sec_items, sec_context, _, _ = get_news_consolidated(m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=3)
-    
+    # --- AI Sector Council is on-demand (keeps sector scan fast) ---
+    sec_items, sec_context = [], ""  # placeholder; real fetch happens only when user requests AI
+
     # Sector Stats
     try:
         med_rs_sec = df['RS_Sec'].median() if 'RS_Sec' in df.columns else np.nan
@@ -2038,10 +2120,7 @@ div[data-baseweb="menu"] span{
                 continue
         return "\n".join(out)
 
-    # Use pre-formatted context lines from the consolidated news fetch (safe + includes source/date)
-    sec_news_str = (sec_context[:1500] if isinstance(sec_context, str) else _news_to_str(sec_items, limit=6))
-    
-    # 🦅 🤖 AI AGENT SECTOR REPORT (fast, top-pick focused)
+    # Top pick line (for display & context)
     tp = df.iloc[0]
     tp_f = pick_fund_row(cand_fund, tp["Ticker"])
     top_line = (
@@ -2051,24 +2130,68 @@ div[data-baseweb="menu"] span{
         f"MCap {format_mcap(tp_f.get('MCap',0), tp_f.get('Currency'))}, PER {dash(tp_f.get('PER'))}, PBR {dash(tp_f.get('PBR'))}"
     )
 
-    sec_ai_raw = generate_ai_content("sector_debate_fast", {
-        "sec": target_sector,
-        # Avoid NameError: use market config name directly (with safe fallback)
-        "market_name": m_cfg.get("name", str(market_key)),
-        "sector_stats": sector_stats_str,
-        "top": top3_str,
-        "news": sec_news_str,
-        "nonce": st.session_state.ai_nonce
-    })
-    sec_ai_txt = quality_gate_text(enforce_da_dearu_soft(sec_ai_raw), enable=st.session_state.get('qc_on', True))
-    if ("[FUNDAMENTAL]" in sec_ai_txt or "[SECTOR_OUTLOOK]" in sec_ai_txt):
-        sec_ai_html = parse_agent_debate(sec_ai_txt)
-    else:
-        sec_ai_html = text_to_safe_html(sec_ai_txt)
-    st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_ai_html}</div>", unsafe_allow_html=True)
-    # Download Council Log (before leaderboard)
-    st.download_button("DOWNLOAD COUNCIL LOG", sec_ai_raw, f"council_log_target_sector_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-    
+    # --- Render panel (cached display) ---
+    sec_ai_ctx_id = f"{market_key}|{target_sector}|{lookback_key}|{st.session_state.ai_nonce}"
+    sec_saved = st.session_state.ai_panels.get(("sector", sec_ai_ctx_id), {}) if isinstance(st.session_state.get("ai_panels"), dict) else {}
+    sec_box_body = "<span class='dim'>AI council is <b>on-demand</b>. Open the panel below and click <b>GENERATE SECTOR COUNCIL</b>.</span>"
+    sec_ai_raw_cached = ""
+    if isinstance(sec_saved, dict) and sec_saved.get("html"):
+        sec_box_body = sec_saved.get("html", sec_box_body)
+        sec_ai_raw_cached = str(sec_saved.get("raw", "") or "")
+
+    st.markdown(f"<div class='report-box'><b>🦅 🤖 AI AGENT SECTOR REPORT</b><br>{sec_box_body}</div>", unsafe_allow_html=True)
+
+    if sec_ai_raw_cached:
+        st.download_button(
+            "DOWNLOAD COUNCIL LOG",
+            sec_ai_raw_cached,
+            f"council_log_target_sector_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+        )
+
+    with st.expander("🦅 🤖 AI AGENT SECTOR REPORT — Generate (on-demand)", expanded=False):
+        st.markdown(
+            "<div class='hint-bar'>"
+            "Runs a 5-agent council for the selected sector. "
+            "Fetches a small headline set and generates the narrative only when requested."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        gen_sec = st.button(
+            "GENERATE SECTOR COUNCIL",
+            key=f"gen_sector_council_{market_key}_{target_sector}_{lookback_key}",
+            type="primary",
+            use_container_width=True,
+        )
+        if gen_sec:
+            with st.spinner("Running sector council..."):
+                try:
+                    sec_items2, sec_context2, _, _ = get_news_consolidated(
+                        m_cfg["sectors"][target_sector], target_sector, market_key, limit_each=3
+                    )
+                except Exception:
+                    sec_items2, sec_context2 = [], ""
+
+                sec_news_str = (sec_context2[:1500] if isinstance(sec_context2, str) else _news_to_str(sec_items2, limit=6))
+
+                sec_ai_raw2 = generate_ai_content("sector_debate_fast", {
+                    "sec": target_sector,
+                    "market_name": m_cfg.get("name", str(market_key)),
+                    "sector_stats": sector_stats_str,
+                    "top": top3_str,
+                    "news": sec_news_str,
+                    "nonce": st.session_state.ai_nonce
+                })
+                sec_ai_txt2 = quality_gate_text(enforce_da_dearu_soft(sec_ai_raw2), enable=st.session_state.get('qc_on', True))
+                if ("[FUNDAMENTAL]" in sec_ai_txt2 or "[SECTOR_OUTLOOK]" in sec_ai_txt2):
+                    sec_ai_html2 = parse_agent_debate(sec_ai_txt2)
+                else:
+                    sec_ai_html2 = text_to_safe_html(sec_ai_txt2)
+
+                if isinstance(st.session_state.get("ai_panels"), dict):
+                    st.session_state.ai_panels[("sector", sec_ai_ctx_id)] = {"raw": sec_ai_raw2, "html": sec_ai_html2}
+
+                st.toast("✅ Sector council updated", icon="✅")
+                st.rerun()
     ev_fund = fetch_fundamentals_batch(top3["Ticker"].tolist()).reset_index()
     ev_df = top3.merge(ev_fund, on="Ticker", how="left")
     for c in ["PER","PBR"]:
@@ -2159,8 +2282,39 @@ div[data-baseweb="menu"] span{
     st.markdown(f"### 🦅 🤖 AI EQUITY ANALYST {top['Name']}")
     st.caption(f"Data Timestamp: {now_str} | Source: yfinance (PER/PBR exclude negatives)")
     
-    news_items, news_context, _, _ = get_news_consolidated(top["Ticker"], top["Name"], market_key, limit_each=10)
-    fund_data = get_fundamental_data(top["Ticker"])
+    # --- NEWS + AI are on-demand (fast initial view) ---
+    stock_ai_ctx_id = f"{market_key}|{target_sector}|{lookback_key}|{top['Ticker']}|{st.session_state.ai_nonce}"
+    saved_report = st.session_state.ai_panels.get(("stock", stock_ai_ctx_id), {}) if isinstance(st.session_state.get("ai_panels"), dict) else {}
+
+    news_ctx_id = f"{market_key}|{top['Ticker']}"
+    saved_news = st.session_state.news_panels.get(news_ctx_id, {}) if isinstance(st.session_state.get("news_panels"), dict) else {}
+    news_items = saved_news.get("items", []) if isinstance(saved_news, dict) else []
+    news_context = saved_news.get("context", "") if isinstance(saved_news, dict) else ""
+
+    # Fundamentals are fully on-demand (no yfinance.info call on selection)
+    ticker_sel = str(top["Ticker"])
+    # Light fundamentals from the table (no network)
+    fund_data = {
+        "Ticker": ticker_sel,
+        "Name": (top.get("Name") if hasattr(top, "get") else ticker_sel),
+        "Sector": (top.get("Sector", "-") if hasattr(top, "get") else "-"),
+        "Industry": (top.get("Industry", "-") if hasattr(top, "get") else "-"),
+        "MCap": (top.get("MCap", np.nan) if hasattr(top, "get") else np.nan),
+        "Currency": (top.get("Currency") if hasattr(top, "get") else None),
+        "PER": (top.get("PER", np.nan) if hasattr(top, "get") else np.nan),
+        "PBR": (top.get("PBR", np.nan) if hasattr(top, "get") else np.nan),
+        "PEG": (top.get("PEG", np.nan) if hasattr(top, "get") else np.nan),
+        "Target": (top.get("Target", np.nan) if hasattr(top, "get") else np.nan),
+        "Website": None,
+        "Summary": "",
+    }
+    # Merge on-demand loaded fundamentals (if any)
+    fund_extra = st.session_state.fund_panels.get(ticker_sel, {}) if isinstance(st.session_state.get("fund_panels"), dict) else {}
+    if isinstance(fund_extra, dict) and fund_extra:
+        # Prefer non-empty values from extra
+        for k, v in fund_extra.items():
+            if v not in (None, "", "-", "nan"):
+                fund_data[k] = v
 
     # --- Company Overview (display vs AI context) ---
     sec_name = str(fund_data.get("Sector") or "-")
@@ -2168,14 +2322,23 @@ div[data-baseweb="menu"] span{
     cur = fund_data.get("Currency")
     mcap = fund_data.get("MCap") or fund_data.get("MarketCap") or np.nan
     mcap_disp = format_mcap(mcap, cur)
-    website = fund_data.get("Website") or "-"
+
+    website = fund_data.get("Website") or ""
+    website_url = _safe_http_url(website)
+    if website_url:
+        website_disp = website_url.replace("https://", "").replace("http://", "")
+        website_html = (
+            f"<a href='{html_lib.escape(website_url, quote=True)}' target='_blank' rel='noopener noreferrer'>"
+            f"{html_lib.escape(website_disp, quote=True)}</a>"
+        )
+    else:
+        website_html = "<span class='dim'>— (load fundamentals)</span>"
 
     # Keep summary ONLY as hidden AI context (not shown as a duplicated UI block)
     bsum_raw = str(fund_data.get("BusinessSummary") or fund_data.get("Summary") or "").strip()
     bsum_raw = re.sub(r"\s+", " ", bsum_raw).strip()
     bsum_src = (bsum_raw[:1200] if bsum_raw else "")
     bsum = bsum_src
-    # Speed: avoid extra AI translation here. Company snapshot is generated inside the main report prompt.
     if len(bsum) > 500:
         bsum = bsum[:500].rstrip() + "…"
 
@@ -2184,24 +2347,39 @@ div[data-baseweb="menu"] span{
 
     overview_display_html = html_lib.escape(str(overview_display), quote=True)
 
-    website_html = html_lib.escape(str(website), quote=True)
-
     st.markdown(
-
         f"<div class='note-box'><b>Company Overview</b><br>{overview_display_html}<br>Website: {website_html}</div>",
-
-        unsafe_allow_html=True
-
+        unsafe_allow_html=True,
     )
 
-    # --- External chart links (1Y chart removed by design) ---
+    # Fundamentals loader (on-demand)
+    with st.expander("📌 FUNDAMENTALS — Load (on-demand)", expanded=False):
+        st.markdown(
+            "<div class='hint-bar'>Loads <b>yfinance.Ticker().info</b> only when requested (keeps selection snappy). "
+            "After loading, the Website line becomes a direct clickable link.</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "LOAD FUNDAMENTALS (yfinance.info)",
+            key=f"load_fund_{market_key}_{target_sector}_{lookback_key}_{ticker_sel}",
+            use_container_width=True,
+        ):
+            with st.spinner("Loading fundamentals..."):
+                try:
+                    fd = get_fundamental_data(ticker_sel)
+                except Exception:
+                    fd = {}
+                if isinstance(st.session_state.get("fund_panels"), dict):
+                    st.session_state.fund_panels[ticker_sel] = fd
+            st.toast("✅ Fundamentals loaded", icon="✅")
+            st.rerun()
+
+    # --- External chart links ---
     try:
         def _tv_symbol(tk: str) -> str:
-            # TradingView symbol mapping (best-effort)
             if tk.endswith(".T"):
                 return "TSE:" + tk.replace(".T","")
             if tk.startswith("^"):
-                # indices: use generic (may not resolve on TV)
                 return tk.replace("^","")
             return tk
         yf_url = f"https://finance.yahoo.com/quote/{top['Ticker']}"
@@ -2212,22 +2390,25 @@ div[data-baseweb="menu"] span{
     except Exception:
         pass
 
-    ed = fetch_earnings_dates(top["Ticker"]).get("EarningsDate", "-")
-    bench_fd = get_fundamental_data(bench)
-    
+    ed = "-"  # Earnings date is fetched on-demand during AI generation
+    bench_fd = {}  # Benchmark fundamentals are fetched on-demand during AI generation
+
     # Price Action Pack
     pa = {}
     try:
         if "sec_df" in st.session_state and top["Ticker"] in st.session_state.sec_df.columns:
             pa = price_action_pack(st.session_state.sec_df[top["Ticker"]])
-    except: pass
-    
+    except Exception:
+        pa = {}
+
     price_act = ""
     if pa:
-        price_act = f"Last {pa.get('Last',np.nan):.2f} | 1D {pa.get('1D',np.nan):+.2f}% | 1W {pa.get('1W',np.nan):+.2f}% | 1M {pa.get('1M',np.nan):+.2f}% | 3M {pa.get('3M',np.nan):+.2f}% | 200DMA {pa.get('200DMA_Dist',np.nan):+.1f}% | MaxDD(6M) {pa.get('MaxDD_6M',np.nan):.1f}%"
-
+        price_act = (
+            f"Last {pa.get('Last',np.nan):.2f} | 1D {pa.get('1D',np.nan):+.2f}% | 1W {pa.get('1W',np.nan):+.2f}% | "
+            f"1M {pa.get('1M',np.nan):+.2f}% | 3M {pa.get('3M',np.nan):+.2f}% | 200DMA {pa.get('200DMA_Dist',np.nan):+.1f}% | "
+            f"MaxDD(6M) {pa.get('MaxDD_6M',np.nan):.1f}%"
+        )
     price_act_html = html_lib.escape(str(price_act), quote=True)
-
     st.markdown(f"<div class='kpi-strip mono'>{price_act_html}</div>", unsafe_allow_html=True)
 
     bench_per = dash(bench_fd.get("PER"))
@@ -2236,66 +2417,296 @@ div[data-baseweb="menu"] span{
     rs_mkt = dash(top.get("RS"), "%.2f")
     rs_sec = dash(top.get("RS_Sec"), "%.2f")
     m_comp = f"市場平均PER: {bench_per}倍 / セクター中央値PER: {sector_per}倍 / 当該銘柄PER: {stock_per}倍 | RS(Mkt): {rs_mkt} | RS(Sec): {rs_sec}"
-    
+
     fund_str = f"PER:{stock_per}, PBR:{dash(fund_data.get('PBR'))}, PEG:{dash(fund_data.get('PEG'))}, Target:{dash(fund_data.get('Target'))}"
 
-    report_txt = generate_ai_content("stock_report", {
-        "name": top["Name"], "ticker": top["Ticker"],
-        "overview": overview_for_ai, "fund_str": fund_str, "m_comp": m_comp, "news": (news_context[:1800] if isinstance(news_context, str) else news_context),
-        "earnings_date": ed, "price_action": price_act, "nonce": st.session_state.ai_nonce
-    })
-    report_txt = clean_ai_text(report_txt)
-
-    # Extract a compact JP snapshot (first line) from the report, and keep the body clean.
-    snap_jp, report_body = split_snapshot_jp(report_txt)
-    report_txt = report_body
-
-    # Fallback: if the model did not emit SNAPSHOT_JP, generate snapshot separately (rare).
+    # --- Read cached AI report if available ---
+    snap_jp = str(saved_report.get("snap", "") or "") if isinstance(saved_report, dict) else ""
     if not snap_jp:
         try:
-            snap_jp = generate_ai_content("company_snapshot_jp", {
-                "name": top["Name"], "ticker": top["Ticker"],
-                "overview": overview_for_ai, "fund_str": fund_str, "m_comp": m_comp, "news": (news_context[:1800] if isinstance(news_context, str) else news_context),
-                "price_action": price_act, "nonce": st.session_state.ai_nonce
-            })
-            snap_jp = clean_ai_text(snap_jp)
-            snap_jp = re.sub(r"\s+", " ", str(snap_jp)).strip()
-            if len(snap_jp) > 220:
-                snap_jp = snap_jp[:219] + "…"
+            snap_jp = str(st.session_state.jp_snapshots.get(ticker_sel, {}).get("text", "") or "")
         except Exception:
             snap_jp = ""
+    report_body = str(saved_report.get("body", "") or "") if isinstance(saved_report, dict) else ""
+    analyst_note_txt = str(saved_report.get("analyst_note", "") or "") if isinstance(saved_report, dict) else ""
+    generated_at = str(saved_report.get("generated_at", "") or "") if isinstance(saved_report, dict) else ""
 
-    # Build downloadable analyst note (no duplicated Summary block in the header)
-    analyst_note_txt = (
-        "Company Overview\n"
-        + f"Name: {top['Name']} ({top['Ticker']})\n"
-        + f"Sector: {sec_name}\nIndustry: {ind_name}\nMarket Cap: {mcap_disp}\nWebsite: {website}\n\n"
-        + ("AI Snapshot (JP)\n" + snap_jp + "\n\n" if snap_jp else "")
-        + "Quantitative Summary\n"
-        + fund_str
-        + "\n\n"
-        + report_txt
-    )
-
-    report_txt_disp = quality_gate_text(enforce_da_dearu_soft(report_txt), enable=st.session_state.get('qc_on', True))
-    
+    # UI
     nc1, nc2 = st.columns([1.5, 1])
     with nc1:
-        report_html = text_to_safe_html(report_txt_disp)
-        snap_html = ""
+        # --- JP Company Snapshot (always shown at the top) ---
         if snap_jp:
             snap_disp = quality_gate_text(enforce_da_dearu_soft(snap_jp), enable=st.session_state.get('qc_on', True))
-            snap_html = (
-                f"<div class='snapshot-box'>"
-                f"<div class='snapshot-title'>AI SNAPSHOT (JP)</div>"
-                f"<div class='snapshot-text'>{text_to_safe_html(snap_disp)}</div>"
-                f"</div>"
+            st.markdown(
+                f"<div class='snapshot-box'><div class='snapshot-title'>AI SNAPSHOT (JP)</div>"
+                f"<div class='snapshot-text'>{text_to_safe_html(snap_disp)}</div></div>",
+                unsafe_allow_html=True,
             )
-        st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{snap_html}{report_html}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div class='snapshot-box'><div class='snapshot-title'>AI SNAPSHOT (JP)</div>"
+                "<div class='dim'>Not generated yet. Open the panel below and click <b>GENERATE JP SNAPSHOT</b>.</div></div>",
+                unsafe_allow_html=True,
+            )
 
-        # Links
+        with st.expander("🇯🇵 AI COMPANY SNAPSHOT (JP) — Generate (on-demand)", expanded=False):
+            st.markdown(
+                "<div class='hint-bar'>"
+                "Generates a tight Japanese snapshot (~200 chars): core business, near-term catalyst, and 3‑month watchpoints. "
+                "Runs <b>only when requested</b> to keep the initial load fast."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            include_news_snap = st.checkbox(
+                "Include fresh news (slower)",
+                value=False,
+                key=f"snap_news_{market_key}_{target_sector}_{lookback_key}_{ticker_sel}",
+            )
+            gen_snap = st.button(
+                "GENERATE JP SNAPSHOT (~200 chars)",
+                key=f"gen_snap_{market_key}_{target_sector}_{lookback_key}_{ticker_sel}",
+                use_container_width=True,
+            )
+            if gen_snap:
+                with st.spinner("Generating JP snapshot..."):
+                    # 1) Load fundamentals on-demand (for Summary/Website/Industry)
+                    try:
+                        fd_full = get_fundamental_data(ticker_sel)
+                    except Exception:
+                        fd_full = {}
+                    if isinstance(st.session_state.get("fund_panels"), dict) and isinstance(fd_full, dict):
+                        st.session_state.fund_panels[ticker_sel] = fd_full
+
+                    sec_name2 = str((fd_full.get("Sector") if isinstance(fd_full, dict) else None) or sec_name)
+                    ind_name2 = str((fd_full.get("Industry") if isinstance(fd_full, dict) else None) or ind_name)
+                    cur2 = (fd_full.get("Currency") if isinstance(fd_full, dict) else None) or cur
+                    mcap2 = (fd_full.get("MCap") if isinstance(fd_full, dict) else None) or (fd_full.get("MarketCap") if isinstance(fd_full, dict) else None) or mcap
+                    mcap_disp2 = format_mcap(mcap2, cur2)
+
+                    bsum_raw2 = str((fd_full.get("BusinessSummary") if isinstance(fd_full, dict) else None) or (fd_full.get("Summary") if isinstance(fd_full, dict) else None) or "").strip()
+                    bsum_raw2 = re.sub(r"\s+", " ", bsum_raw2).strip()
+                    bsum2 = bsum_raw2
+                    if len(bsum2) > 500:
+                        bsum2 = bsum2[:500].rstrip() + "…"
+
+                    overview_for_ai2 = f"Sector:{sec_name2} | Industry:{ind_name2} | MCap:{mcap_disp2} | Summary:{bsum2 if bsum2 else '-'}"
+
+                    # Light valuation string (avoid extra network; benchmark PER omitted here)
+                    per_val = (fd_full.get("PER") if isinstance(fd_full, dict) else None)
+                    if pd.isna(per_val):
+                        per_val = fund_data.get("PER")
+                    pbr_val = (fd_full.get("PBR") if isinstance(fd_full, dict) else None)
+                    if pd.isna(pbr_val):
+                        pbr_val = fund_data.get("PBR")
+                    peg_val = (fd_full.get("PEG") if isinstance(fd_full, dict) else np.nan)
+                    target_val = (fd_full.get("Target") if isinstance(fd_full, dict) else np.nan)
+                    stock_per2 = dash(per_val)
+                    stock_pbr2 = dash(pbr_val)
+                    fund_str2 = f"PER:{stock_per2}, PBR:{stock_pbr2}, PEG:{dash(peg_val)}, Target:{dash(target_val)}"
+
+                    sector_per2 = dash(pd.to_numeric(df.get("PER"), errors="coerce").median()) if isinstance(df, pd.DataFrame) else "-"
+                    rs_mkt2 = dash(top.get("RS"), "%.2f")
+                    rs_sec2 = dash(top.get("RS_Sec"), "%.2f")
+                    m_comp2 = f"セクター中央値PER: {sector_per2}倍 / 当該銘柄PER: {stock_per2}倍 | RS(Mkt): {rs_mkt2} | RS(Sec): {rs_sec2}"
+
+                    # 2) News (optional)
+                    news_for_snap = news_context
+                    if include_news_snap:
+                        try:
+                            news_items3, news_context3, _, _ = get_news_consolidated(ticker_sel, top["Name"], market_key, limit_each=10)
+                            news_for_snap = news_context3
+                            if isinstance(st.session_state.get("news_panels"), dict):
+                                st.session_state.news_panels[news_ctx_id] = {"items": news_items3, "context": news_context3}
+                        except Exception:
+                            pass
+
+                    # 3) LLM call (lite model by routing)
+                    snap_txt = generate_ai_content("company_snapshot_jp", {
+                        "name": top["Name"], "ticker": ticker_sel,
+                        "overview": overview_for_ai2,
+                        "fund_str": fund_str2,
+                        "m_comp": m_comp2,
+                        "news": (news_for_snap[:1800] if isinstance(news_for_snap, str) else news_for_snap),
+                        "price_action": price_act,
+                        "nonce": st.session_state.ai_nonce,
+                    })
+                    snap_txt = clean_ai_text(snap_txt)
+                    snap_txt = re.sub(r"\s+", " ", str(snap_txt)).strip()
+                    if snap_txt and len(snap_txt) > 220:
+                        snap_txt = snap_txt[:219] + "…"
+
+                    if isinstance(st.session_state.get("jp_snapshots"), dict):
+                        st.session_state.jp_snapshots[ticker_sel] = {
+                            "text": str(snap_txt or ""),
+                            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        }
+                    st.toast("✅ JP snapshot updated", icon="✅")
+                    st.rerun()
+
+        # --- AI equity briefing ---
+        if report_body:
+            report_txt_disp = quality_gate_text(enforce_da_dearu_soft(report_body), enable=st.session_state.get('qc_on', True))
+            report_html = text_to_safe_html(report_txt_disp)
+            gen_stamp = f"<div class='dim' style='margin-top:6px;'>Generated: {html_lib.escape(generated_at, quote=True)}</div>" if generated_at else ""
+            st.markdown(f"<div class='report-box'><b>AI EQUITY BRIEFING</b><br>{report_html}{gen_stamp}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div class='report-box'><b>AI EQUITY BRIEFING</b><br>"
+                "<span class='dim'>AI briefing is <b>on-demand</b>. Open the panel below and click <b>GENERATE AI EQUITY BRIEFING</b>.</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+        with st.expander("🦅 🤖 AI EQUITY BRIEFING — Generate (on-demand)", expanded=False):
+            st.markdown(
+                "<div class='hint-bar'>"
+                "Generates the analyst memo only when requested (keeps initial load fast). "
+                "It also refreshes the integrated news cache for this ticker."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            gen_stock = st.button(
+                "GENERATE AI EQUITY BRIEFING",
+                key=f"gen_stock_report_{market_key}_{target_sector}_{lookback_key}_{top['Ticker']}",
+                type="primary",
+                use_container_width=True,
+            )
+            if gen_stock:
+                with st.spinner("Generating analyst briefing..."):
+                    # 0) Fundamentals + earnings date (on-demand)
+                    ticker_sel2 = str(top["Ticker"])
+                    try:
+                        fd_full = get_fundamental_data(ticker_sel2)
+                    except Exception:
+                        fd_full = {}
+                    if isinstance(st.session_state.get("fund_panels"), dict) and isinstance(fd_full, dict):
+                        st.session_state.fund_panels[ticker_sel2] = fd_full
+
+                    # Earnings date (best-effort; cached)
+                    try:
+                        ed2 = fetch_earnings_dates(ticker_sel2).get("EarningsDate", "-")
+                    except Exception:
+                        ed2 = "-"
+
+                    # Benchmark PER (best-effort; cached)
+                    bench_per2 = "-"
+                    try:
+                        bfd = get_fundamental_data(bench)
+                        bench_per2 = dash(bfd.get("PER"))
+                    except Exception:
+                        bench_per2 = "-"
+
+                    sec_name2 = str((fd_full.get("Sector") if isinstance(fd_full, dict) else None) or sec_name)
+                    ind_name2 = str((fd_full.get("Industry") if isinstance(fd_full, dict) else None) or ind_name)
+                    cur2 = (fd_full.get("Currency") if isinstance(fd_full, dict) else None) or cur
+                    mcap2 = (fd_full.get("MCap") if isinstance(fd_full, dict) else None) or (fd_full.get("MarketCap") if isinstance(fd_full, dict) else None) or mcap
+                    mcap_disp2 = format_mcap(mcap2, cur2)
+                    website2 = (fd_full.get("Website") if isinstance(fd_full, dict) else None) or (fund_data.get("Website") or "")
+
+                    bsum_raw2 = str((fd_full.get("BusinessSummary") if isinstance(fd_full, dict) else None) or (fd_full.get("Summary") if isinstance(fd_full, dict) else None) or "").strip()
+                    bsum_raw2 = re.sub(r"\s+", " ", bsum_raw2).strip()
+                    bsum2 = bsum_raw2
+                    if len(bsum2) > 500:
+                        bsum2 = bsum2[:500].rstrip() + "…" 
+                    overview_for_ai2 = f"Sector:{sec_name2} | Industry:{ind_name2} | MCap:{mcap_disp2} | Summary:{bsum2 if bsum2 else '-'}"
+
+                    per_val2 = (fd_full.get("PER") if isinstance(fd_full, dict) else None)
+                    if pd.isna(per_val2):
+                        per_val2 = fund_data.get("PER")
+                    pbr_val2 = (fd_full.get("PBR") if isinstance(fd_full, dict) else None)
+                    if pd.isna(pbr_val2):
+                        pbr_val2 = fund_data.get("PBR")
+                    peg_val2 = (fd_full.get("PEG") if isinstance(fd_full, dict) else np.nan)
+                    target_val2 = (fd_full.get("Target") if isinstance(fd_full, dict) else np.nan)
+                    stock_per2 = dash(per_val2)
+                    sector_per2 = dash(pd.to_numeric(df.get("PER"), errors="coerce").median()) if isinstance(df, pd.DataFrame) else "-"
+                    rs_mkt2 = dash(top.get("RS"), "%.2f")
+                    rs_sec2 = dash(top.get("RS_Sec"), "%.2f")
+                    m_comp2 = f"市場平均PER: {bench_per2}倍 / セクター中央値PER: {sector_per2}倍 / 当該銘柄PER: {stock_per2}倍 | RS(Mkt): {rs_mkt2} | RS(Sec): {rs_sec2}"
+                    fund_str2 = f"PER:{stock_per2}, PBR:{dash(pbr_val2)}, PEG:{dash(peg_val2)}, Target:{dash(target_val2)}"
+
+                    # 1) Fetch news (cached 30m)
+                    try:
+                        news_items2, news_context2, _, _ = get_news_consolidated(top["Ticker"], top["Name"], market_key, limit_each=10)
+                    except Exception:
+                        news_items2, news_context2 = [], ""
+                    if isinstance(st.session_state.get("news_panels"), dict):
+                        st.session_state.news_panels[news_ctx_id] = {"items": news_items2, "context": news_context2}
+
+                    # 2) Main report
+                    report_txt2 = generate_ai_content("stock_report", {
+                        "name": top["Name"], "ticker": top["Ticker"],
+                        "overview": overview_for_ai2,
+                        "fund_str": fund_str2,
+                        "m_comp": m_comp2,
+                        "news": (news_context2[:1800] if isinstance(news_context2, str) else news_context2),
+                        "earnings_date": ed2,
+                        "price_action": price_act,
+                        "nonce": st.session_state.ai_nonce
+                    })
+                    report_txt2 = clean_ai_text(report_txt2)
+
+                    # Extract a compact JP snapshot (first line) from the report, and keep the body clean.
+                    snap_jp2, report_body2 = split_snapshot_jp(report_txt2)
+                    report_body2 = str(report_body2 or "").strip()
+
+                    # Fallback: if the model did not emit SNAPSHOT_JP, generate snapshot separately (rare).
+                    if not snap_jp2:
+                        try:
+                            snap_jp2 = generate_ai_content("company_snapshot_jp", {
+                                "name": top["Name"], "ticker": top["Ticker"],
+                                "overview": overview_for_ai2,
+                                "fund_str": fund_str2,
+                                "m_comp": m_comp2,
+                                "news": (news_context2[:1800] if isinstance(news_context2, str) else news_context2),
+                                "price_action": price_act,
+                                "nonce": st.session_state.ai_nonce
+                            })
+                            snap_jp2 = clean_ai_text(snap_jp2)
+                            snap_jp2 = re.sub(r"\s+", " ", str(snap_jp2)).strip()
+                        except Exception:
+                            snap_jp2 = ""
+
+                    # Hard cap (never exceed 220 chars in UI)
+                    try:
+                        if snap_jp2 and len(snap_jp2) > 220:
+                            snap_jp2 = snap_jp2[:219] + "…"
+                    except Exception:
+                        pass
+
+                    # Build downloadable analyst note (no duplicated Summary block in the header)
+                    analyst_note_txt2 = (
+                        "Company Overview\n"
+                        + f"Name: {top['Name']} ({top['Ticker']})\n"
+                        + f"Sector: {sec_name2}\nIndustry: {ind_name2}\nMarket Cap: {mcap_disp2}\nWebsite: {website2}\n\n"
+                        + ("AI Snapshot (JP)\n" + str(snap_jp2) + "\n\n" if snap_jp2 else "")
+                        + "Quantitative Summary\n"
+                        + fund_str2
+                        + "\n\n"
+                        + report_body2
+                    )
+
+
+                    # Persist snapshot separately so it is always visible at the top
+                    if snap_jp2 and isinstance(st.session_state.get("jp_snapshots"), dict):
+                        st.session_state.jp_snapshots[ticker_sel2] = {
+                            "text": str(snap_jp2),
+                            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        }
+                    if isinstance(st.session_state.get("ai_panels"), dict):
+                        st.session_state.ai_panels[("stock", stock_ai_ctx_id)] = {
+                            "snap": str(snap_jp2 or ""),
+                            "body": report_body2,
+                            "analyst_note": analyst_note_txt2,
+                            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        }
+
+                    st.toast("✅ Equity briefing updated", icon="✅")
+                    st.rerun()
+
+        # Links (always available)
         st.markdown(
-            "<div class='hint-bar'>Quick Links: <b>OFFICIAL</b> (company site), <b>IR SEARCH</b>, <b>EARNINGS DECK</b> — opens a new tab.</div>",
+            "<div class='hint-bar'>Select buttons to open a new tab: <b>OFFICIAL</b> (company site), <b>IR SEARCH</b>, <b>EARNINGS DECK</b>.</div>",
             unsafe_allow_html=True,
         )
         links = build_ir_links(top["Name"], top["Ticker"], fund_data.get("Website"), market_key)
@@ -2303,25 +2714,431 @@ div[data-baseweb="menu"] span{
         with lc1: safe_link_button("OFFICIAL", links["official"], use_container_width=True)
         with lc2: safe_link_button("IR SEARCH", links["ir_search"], use_container_width=True)
         with lc3: safe_link_button("EARNINGS DECK", links["earnings_deck"], use_container_width=True)
-        try:
-            target_mcap = top["MCap"] if pd.notna(top["MCap"]) else 0
-            df_peers_base = df_sorted.copy()
-            df_peers_base["Dist"] = (pd.to_numeric(df_peers_base["MCap"], errors="coerce") - float(target_mcap or 0)).abs()
-            df_peers = df_peers_base.sort_values("Dist").iloc[1:5]
-            st.dataframe(df_peers[["Name", "ROE", "RevGrow", "PER", "PBR", "RS", "12M"]], hide_index=True)
-        except: pass
-        
-        st.caption(
-            "PEER LOGIC | Nearest Market Cap: |MCap(peer)−MCap(target)|が小さい順に抽出（同一セクター内） | "
-            "SOURCE: yfinance.Ticker().info（欠損は'-'）"
-        )
-        st.download_button("DOWNLOAD ANALYST NOTE", analyst_note_txt, f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+
+        # --- PRO PEER DASHBOARD (visual) ---
+        with st.expander("📊 PEER DASHBOARD — Sector peers (pro)", expanded=False):
+            st.markdown(
+                "<div class='hint-bar'>"
+                "<b>What you get:</b> percentile ranks, a <b>Peer Map</b> with pro-axis switch (e.g., RS×Valuation PER/PBR), and a ranked peer table. "
+                "All peers are within the selected sector."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            peer_mode = st.selectbox(
+                "Peer Set",
+                ["Top Momentum (Apex)", "Top Sector Winners (RS_Sec)", "Size Peers (Market Cap)"],
+                index=0,
+                key=f"peer_mode_{market_key}_{target_sector}_{lookback_key}_{top['Ticker']}",
+            )
+            peer_n = st.slider(
+                "Peers",
+                min_value=8,
+                max_value=25,
+                value=12,
+                step=1,
+                key=f"peer_n_{market_key}_{target_sector}_{lookback_key}_{top['Ticker']}",
+            )
+            st.markdown(
+                "<div class='mini-note'><b>Peer Map Axis (Pro)</b> — Switch to RS×Valuation (PER/PBR) etc.</div>",
+                unsafe_allow_html=True,
+            )
+            axis_opts = {
+                "RS vs Sector (RS_Sec)": "RS_Sec",
+                "RS vs Market (RS)": "RS",
+                "Valuation: P/E (PER)": "PER",
+                "Valuation: P/B (PBR)": "PBR",
+                "Apex Score": "Apex",
+                "Resilience (−MaxDD)": "Resilience",
+                "Return (Lookback)": "Ret",
+                "1M Return": "1M",
+                "3M Return": "3M",
+                "HighDist (to 52W High)": "HighDist",
+                "Accel": "Accel",
+                "Volatility (ann%)": "Vol(ann)",
+                "Beta (calc)": "Beta(calc)",
+            }
+            axis_labels = list(axis_opts.keys())
+            _def_x = axis_labels.index("RS vs Sector (RS_Sec)") if "RS vs Sector (RS_Sec)" in axis_labels else 0
+            _def_y = axis_labels.index("Resilience (−MaxDD)") if "Resilience (−MaxDD)" in axis_labels else 0
+            x_axis_label = st.selectbox(
+                "Peer Map — X Axis",
+                axis_labels,
+                index=_def_x,
+                key=f"peer_x_{market_key}_{target_sector}_{lookback_key}_{top['Ticker']}",
+            )
+            y_axis_label = st.selectbox(
+                "Peer Map — Y Axis",
+                axis_labels,
+                index=_def_y,
+                key=f"peer_y_{market_key}_{target_sector}_{lookback_key}_{top['Ticker']}",
+            )
+            x_col = axis_opts.get(x_axis_label, "RS_Sec")
+            y_col = axis_opts.get(y_axis_label, "Resilience")
+
+            peer_ctx = f"{market_key}|{target_sector}|{lookback_key}|{top['Ticker']}|{peer_mode}|{peer_n}"
+            build_peers = st.button(
+                "BUILD PEER DASHBOARD",
+                key=f"peer_build_{peer_ctx}",
+                use_container_width=True,
+            )
+            if build_peers and isinstance(st.session_state.get("peer_cache"), dict):
+                st.session_state.peer_cache[peer_ctx] = True
+                st.rerun()
+
+            if isinstance(st.session_state.get("peer_cache"), dict) and st.session_state.peer_cache.get(peer_ctx):
+                # Universe (numeric)
+                uni = df.copy()
+                # Basic safety conversions
+                for c in ["Apex","RS_Sec","RS","Ret","1M","3M","MaxDD","HighDist","Accel","MCap","PER","PBR","ROE","RevGrow","OpMargin","Beta"]:
+                    if c in uni.columns:
+                        uni[c] = pd.to_numeric(uni[c], errors="coerce")
+
+                target_ticker = str(top["Ticker"])
+                target_mcap = float(mcap) if pd.notna(mcap) else np.nan
+
+                # Peer selection
+                peer_tickers = []
+                try:
+                    if peer_mode.startswith("Top Momentum"):
+                        peer_tickers = uni.sort_values("Apex", ascending=False)["Ticker"].head(peer_n).tolist()
+                    elif peer_mode.startswith("Top Sector"):
+                        peer_tickers = uni.sort_values("RS_Sec", ascending=False)["Ticker"].head(peer_n).tolist()
+                    else:
+                        # Size peers: fetch MCap for a capped candidate set, then find nearest.
+                        cand = uni["Ticker"].tolist()
+                        cap_n = 80
+                        if len(cand) > cap_n:
+                            cand = uni.sort_values("Apex", ascending=False)["Ticker"].head(cap_n).tolist()
+                            st.caption(f"Size peers use a capped candidate set: top {cap_n} by Apex (for speed).")
+                        if target_ticker not in cand:
+                            cand = [target_ticker] + cand[:-1]
+                        cand_f = fetch_fundamentals_batch(cand).reset_index()
+                        cand_f["MCap"] = pd.to_numeric(cand_f.get("MCap"), errors="coerce")
+                        t_m = float(cand_f.loc[cand_f["Ticker"] == target_ticker, "MCap"].iloc[0]) if (not cand_f.empty and (cand_f["Ticker"] == target_ticker).any()) else target_mcap
+                        if pd.isna(t_m): t_m = target_mcap
+                        cand_f["Dist"] = (cand_f["MCap"] - float(t_m or 0)).abs()
+                        peer_tickers = cand_f.sort_values("Dist")["Ticker"].tolist()
+                        peer_tickers = [t for t in peer_tickers if t != target_ticker][:peer_n]
+                except Exception:
+                    peer_tickers = uni.sort_values("Apex", ascending=False)["Ticker"].head(peer_n).tolist()
+
+                # Ensure target is included
+                if target_ticker not in peer_tickers:
+                    peer_tickers = [target_ticker] + peer_tickers[: max(0, peer_n-1)]
+                else:
+                    # Move target to top
+                    peer_tickers = [target_ticker] + [t for t in peer_tickers if t != target_ticker]
+
+                peers = uni[uni["Ticker"].isin(peer_tickers)].copy()
+                # Keep peer order
+                peers["__ord"] = peers["Ticker"].apply(lambda x: peer_tickers.index(x) if x in peer_tickers else 9999)
+                peers = peers.sort_values("__ord").drop(columns=["__ord"])
+
+                # Fundamentals for peers (small batch; cached)
+                try:
+                    pf = fetch_fundamentals_batch(peer_tickers).reset_index()
+                except Exception:
+                    pf = pd.DataFrame({"Ticker": peer_tickers})
+                peers = peers.merge(pf, on="Ticker", how="left", suffixes=("", "_f"))
+
+                # Market cap / valuation fallbacks
+                if "MCap_f" in peers.columns and "MCap" in peers.columns:
+                    peers["MCap"] = peers["MCap"].fillna(peers["MCap_f"])
+                if "Currency_f" in peers.columns and "Currency" in peers.columns:
+                    peers["Currency"] = peers["Currency"].fillna(peers["Currency_f"])
+                for c in ["PER","PBR","ROE","RevGrow","OpMargin","Beta"]:
+                    if f"{c}_f" in peers.columns and c in peers.columns:
+                        peers[c] = peers[c].fillna(peers[f"{c}_f"])
+
+                # Extra risk metrics from prices (Vol/BetaCalc)
+                bench_series = None
+                try:
+                    if "sec_df" in st.session_state:
+                        sec_df = st.session_state.sec_df
+                        if bench in sec_df.columns:
+                            bench_series = sec_df[bench]
+                except Exception:
+                    bench_series = None
+
+                def _realized_vol(price: pd.Series, win: int = 63) -> float:
+                    try:
+                        p = price.ffill().tail(win+1)
+                        r = p.pct_change().dropna()
+                        if r.empty: return np.nan
+                        return float(r.std(ddof=0) * (252 ** 0.5) * 100)
+                    except Exception:
+                        return np.nan
+
+                def _beta_calc(price: pd.Series, bench_p: pd.Series, win: int = 63) -> float:
+                    try:
+                        if bench_p is None: return np.nan
+                        p = price.ffill().tail(win+1)
+                        b = bench_p.ffill().tail(win+1)
+                        r = p.pct_change()
+                        rb = b.pct_change()
+                        tmp = pd.concat([r, rb], axis=1).dropna()
+                        if tmp.shape[0] < 3: return np.nan
+                        cov = float(tmp.iloc[:,0].cov(tmp.iloc[:,1]))
+                        var = float(tmp.iloc[:,1].var())
+                        return cov/var if var > 0 else np.nan
+                    except Exception:
+                        return np.nan
+
+                peers["Vol(ann)"] = np.nan
+                peers["Beta(calc)"] = np.nan
+                try:
+                    if "sec_df" in st.session_state:
+                        sec_df = st.session_state.sec_df
+                        for t in peer_tickers:
+                            if t in sec_df.columns:
+                                peers.loc[peers["Ticker"] == t, "Vol(ann)"] = _realized_vol(sec_df[t], win=min(LOOKBACKS.get(lookback_key, 63), 126))
+                                peers.loc[peers["Ticker"] == t, "Beta(calc)"] = _beta_calc(sec_df[t], bench_series, win=min(LOOKBACKS.get(lookback_key, 63), 126))
+                except Exception:
+                    pass
+
+                # Add helper columns
+                peers["Resilience"] = -pd.to_numeric(peers.get("MaxDD"), errors="coerce")
+                peers["MCapDisp"] = peers.apply(lambda r: format_mcap(r.get("MCap", 0), r.get("Currency")), axis=1)
+
+                # Percentile table (sector universe, technical only)
+                pct_rows = []
+                pct_metrics = [
+                    ("Apex", True),
+                    ("RS_Sec", True),
+                    ("RS", True),
+                    ("Ret", True),
+                    ("1M", True),
+                    ("3M", True),
+                    ("MaxDD", True),  # higher (closer to 0) is better
+                    ("HighDist", True),
+                    ("Accel", True),
+                ]
+                for met, higher_better in pct_metrics:
+                    if met not in uni.columns: 
+                        continue
+                    s = pd.to_numeric(uni[met], errors="coerce")
+                    if s.dropna().empty:
+                        continue
+                    v = pd.to_numeric(peers.loc[peers["Ticker"] == target_ticker, met], errors="coerce")
+                    v = float(v.iloc[0]) if (not v.empty and pd.notna(v.iloc[0])) else np.nan
+                    if pd.isna(v):
+                        continue
+                    try:
+                        idx0 = uni.index[uni["Ticker"] == target_ticker]
+                        if len(idx0) > 0:
+                            pct = float((s.rank(pct=True) * 100).loc[idx0].iloc[0])
+                        else:
+                            pct = float((s < v).mean() * 100)
+                    except Exception:
+                        pct = float((s < v).mean() * 100)
+                    pct_rows.append({"Metric": met, "Value": v, "Percentile": pct})
+                if pct_rows:
+                    pct_df = pd.DataFrame(pct_rows)
+                    # Formatting
+                    try:
+                        pct_df["Value"] = pct_df.apply(lambda r: f"{r['Value']:.2f}" if r["Metric"] in ["Apex","RS_Sec","RS","Accel"] else f"{r['Value']:+.1f}%", axis=1)
+                    except Exception:
+                        pass
+                    try:
+                        pct_df["Percentile"] = pct_df["Percentile"].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "-")
+                    except Exception:
+                        pass
+                    st.markdown("<div class='mini-note'><b>Target Percentile (within sector)</b></div>", unsafe_allow_html=True)
+                    st.dataframe(pct_df, hide_index=True, use_container_width=True)
+
+                # Visuals
+                try:
+                    import plotly.express as px
+                    import plotly.graph_objects as go
+
+                    plot_df = peers.copy()
+                    # Bubble size (log cap)
+                    plot_df["MCapSize"] = pd.to_numeric(plot_df["MCap"], errors="coerce")
+                    plot_df["MCapSize"] = plot_df["MCapSize"].fillna(plot_df["MCapSize"].median())
+                    plot_df["MCapSize"] = np.log10(plot_df["MCapSize"].clip(lower=1))
+                    # Selected axes (pro)
+                    if x_col not in plot_df.columns or y_col not in plot_df.columns:
+                        st.warning("Selected axes are not available for this peer set.")
+                    else:
+                        try:
+                            plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
+                            plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors="coerce")
+                        except Exception:
+                            pass
+
+                        title_txt = f"Peer Map: {x_axis_label} × {y_axis_label}"
+
+                        hover_data = {
+                            "Ticker": True,
+                            "Apex": ":.2f",
+                            "RS_Sec": ":.2f",
+                            "RS": ":.2f",
+                            "PER": ":.1f",
+                            "PBR": ":.2f",
+                            "Ret": ":.1f",
+                            "MaxDD": ":.1f",
+                            "MCapDisp": True,
+                        }
+                        # Keep only columns that exist
+                        try:
+                            hover_data = {k: v for k, v in hover_data.items() if (k in plot_df.columns) or (k in ["Ticker", "MCapDisp"])}
+                        except Exception:
+                            pass
+
+                        fig = px.scatter(
+                            plot_df,
+                            x=x_col,
+                            y=y_col,
+                            size="MCapSize",
+                            color="Apex",
+                            hover_name="Name",
+                            hover_data=hover_data,
+                            title=title_txt,
+                        )
+                        fig.update_layout(
+                            template="plotly_dark",
+                            height=420,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="#e6e6e6",
+                            margin=dict(l=10, r=10, t=50, b=10),
+                            showlegend=False,
+                        )
+                        # Highlight target
+                        trow = plot_df.loc[plot_df["Ticker"] == target_ticker]
+                        if not trow.empty:
+                            try:
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=trow[x_col],
+                                        y=trow[y_col],
+                                        mode="markers+text",
+                                        text=["TARGET"],
+                                        textposition="top center",
+                                        marker=dict(size=16, symbol="diamond", line=dict(width=2, color="#00f2fe"), color="#00f2fe"),
+                                        hoverinfo="skip",
+                                    )
+                                )
+                            except Exception:
+                                pass
+
+                        # Reference lines: 0-line for RS/Resilience-like axes; median line for valuation axes
+                        try:
+                            if x_col in ["RS_Sec", "RS", "Accel", "Resilience"]:
+                                fig.add_vline(x=0, line_dash="dot", line_width=1, line_color="rgba(255,255,255,0.25)")
+                        except Exception:
+                            pass
+                        try:
+                            if y_col in ["RS_Sec", "RS", "Accel", "Resilience"]:
+                                fig.add_hline(y=0, line_dash="dot", line_width=1, line_color="rgba(255,255,255,0.25)")
+                        except Exception:
+                            pass
+                        try:
+                            if x_col in ["PER", "PBR"]:
+                                mx = pd.to_numeric(plot_df[x_col], errors="coerce").median()
+                                if pd.notna(mx):
+                                    fig.add_vline(x=float(mx), line_dash="dot", line_width=1, line_color="rgba(255,255,255,0.25)")
+                        except Exception:
+                            pass
+                        try:
+                            if y_col in ["PER", "PBR"]:
+                                my = pd.to_numeric(plot_df[y_col], errors="coerce").median()
+                                if pd.notna(my):
+                                    fig.add_hline(y=float(my), line_dash="dot", line_width=1, line_color="rgba(255,255,255,0.25)")
+                        except Exception:
+                            pass
+
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    # Apex rank bar
+                    bar_df = peers.copy()
+                    bar_df["Label"] = bar_df["Name"] + " (" + bar_df["Ticker"] + ")"
+                    bar_df = bar_df.sort_values("Apex", ascending=True)
+                    fig2 = px.bar(
+                        bar_df,
+                        x="Apex",
+                        y="Label",
+                        orientation="h",
+                        title="Peer Ranking: Apex (Momentum Composite)",
+                    )
+                    fig2.update_layout(
+                        template="plotly_dark",
+                        height=420,
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#e6e6e6",
+                        margin=dict(l=10, r=10, t=50, b=10),
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
+                except Exception as e:
+                    st.info(f"Peer visuals unavailable: {e}")
+
+                # Peer table (pro view)
+                show_cols = [
+                    "Name","Ticker","MCapDisp","Apex","RS","RS_Sec","Ret","1M","3M","MaxDD","Resilience","Vol(ann)","Beta(calc)","PER","PBR","ROE","RevGrow"
+                ]
+                show_cols = [c for c in show_cols if c in peers.columns]
+                disp = peers[show_cols].copy()
+                # friendly formatting
+                for c in ["Ret","1M","3M","MaxDD","Resilience","Vol(ann)"]:
+                    if c in disp.columns:
+                        disp[c] = pd.to_numeric(disp[c], errors="coerce").apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "-")
+                for c in ["Apex","RS","RS_Sec","Beta(calc)"]:
+                    if c in disp.columns:
+                        disp[c] = pd.to_numeric(disp[c], errors="coerce").apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-")
+                for c in ["PER","PBR"]:
+                    if c in disp.columns:
+                        disp[c] = pd.to_numeric(disp[c], errors="coerce").apply(lambda x: f"{x:.1f}" if pd.notna(x) else "-")
+                for c in ["ROE","RevGrow"]:
+                    if c in disp.columns:
+                        disp[c] = pd.to_numeric(disp[c], errors="coerce").apply(lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-")
+
+                st.markdown("<div class='mini-note'><b>Peer Table</b></div>", unsafe_allow_html=True)
+                st.dataframe(disp, hide_index=True, use_container_width=True)
+                st.caption(
+                    "NOTES | Resilience = −MaxDD（大きいほどドローダウン耐性が高い） | "
+                    "Vol(ann): 期間内の日次リターンから年率換算 | Beta(calc): 同期間の指数に対する回帰β（価格系列から算出）"
+                )
+            else:
+                st.info("Click BUILD PEER DASHBOARD to render comparisons.")
+
+        if analyst_note_txt:
+            st.download_button(
+                "DOWNLOAD ANALYST NOTE",
+                analyst_note_txt,
+                f"analyst_note_{top['Ticker']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            )
 
     with nc2:
         st.caption("INTEGRATED NEWS FEED")
-        for n in news_items[:20]:
-            dt = datetime.fromtimestamp(n["pub"]).strftime("%Y/%m/%d") if n["pub"] else "-"
-            st.markdown(f"- {dt} [{n['src']}] [{n['title']}]({n['link']})")
+        load_news = st.button(
+            "LOAD NEWS FEED",
+            key=f"load_news_{market_key}_{top['Ticker']}",
+            use_container_width=True,
+        )
+        if load_news:
+            with st.spinner("Loading news..."):
+                try:
+                    news_items2, news_context2, _, _ = get_news_consolidated(top["Ticker"], top["Name"], market_key, limit_each=10)
+                except Exception:
+                    news_items2, news_context2 = [], ""
+                if isinstance(st.session_state.get("news_panels"), dict):
+                    st.session_state.news_panels[news_ctx_id] = {"items": news_items2, "context": news_context2}
+                st.toast("🗞️ News updated", icon="🗞️")
+                st.rerun()
+
+        if news_items:
+            for n in news_items[:20]:
+                dt = datetime.fromtimestamp(n.get("pub", 0)).strftime("%Y/%m/%d") if n.get("pub") else "-"
+                src = n.get("src", "-")
+                title = n.get("title", "-")
+                link = n.get("link", "")
+                try:
+                    st.markdown(f"- {dt} [{src}] [{title}]({link})")
+                except Exception:
+                    st.markdown(f"- {dt} [{src}] {title}")
+        else:
+            st.markdown("<div class='mini-note'><span class='dim'>No news loaded yet. Click <b>LOAD NEWS FEED</b> or generate the AI briefing (which also loads news).</span></div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     run()
