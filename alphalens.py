@@ -15,13 +15,10 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-
-# --- BUILD ---
-BUILD_TAG = "2026-02-16-r6"
-st.set_page_config(page_title=f"ALPHALENS — {BUILD_TAG}", page_icon="🦅", layout="wide")
 # Import Universe
 try:
     import universe
@@ -42,6 +39,7 @@ MARKETS = universe.MARKETS
 NAME_DB = universe.NAME_DB
 LOOKBACKS = {"1W (5d)": 5, "1M (21d)": 21, "3M (63d)": 63, "12M (252d)": 252}
 FETCH_PERIOD = "24mo"
+BUILD_ID = "2026-02-16-r8"  # visible in UI for deployment verification
 
 @st.cache_data(ttl=86400)
 def fetch_name_fallback(ticker: str) -> str:
@@ -1689,19 +1687,22 @@ div[data-baseweb="menu"] span{
 }
 
 
-.build-tag{
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: var(--fz-note) !important;
-  color: rgba(0,242,254,0.85) !important;
+/* Build badge (deployment verification) */
+.build-badge{
+  font-family:'JetBrains Mono', monospace !important;
+  font-size: 11px;
+  letter-spacing: 0.10em;
+  color: #9fb3b6;
   margin-top: -10px;
   margin-bottom: 10px;
+  text-align: center;
 }
 
 </style>
 """, unsafe_allow_html=True)
     
     st.markdown("<h1 class='brand'>ALPHALENS</h1>", unsafe_allow_html=True)
-    st.markdown(f"<div class='build-tag'>Build: {BUILD_TAG}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='build-badge'>Build: {BUILD_ID}</div>", unsafe_allow_html=True)
     
     # 0. Controls
     c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1.0])
@@ -2962,8 +2963,6 @@ div[data-baseweb="menu"] span{
 
                 # Visuals
                 try:
-                    import plotly.express as px
-                    import plotly.graph_objects as go
 
                     plot_df = peers.copy()
                     # Bubble size (log cap)
